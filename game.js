@@ -340,9 +340,10 @@ class GameScene extends Phaser.Scene {
     const segments = 28;
     for (let i = 0; i <= segments; i++) {
       const t = i / segments;
-      const y = HORIZON_Y + t * (NEAR_Y - HORIZON_Y);
+      const y = HORIZON_Y + t * (ROAD_END_Y - HORIZON_Y);
+      const depthT = pT(y);
       const cx = this._curveCenterX(y);
-      const hw = this._trackHalfWidth(t);
+      const hw = this._trackHalfWidth(depthT);
       left.push({ x: cx - hw, y });
       right.push({ x: cx + hw, y });
       lane1.push({ x: cx - hw * 0.333, y });
@@ -400,8 +401,8 @@ class GameScene extends Phaser.Scene {
     g.strokePath();
     g.lineStyle(5, 0x455a64, 0.82);
     g.beginPath();
-    g.moveTo(left[left.length - 1].x, NEAR_Y);
-    g.lineTo(right[right.length - 1].x, NEAR_Y);
+    g.moveTo(left[left.length - 1].x, ROAD_END_Y);
+    g.lineTo(right[right.length - 1].x, ROAD_END_Y);
     g.strokePath();
   }
 
@@ -410,7 +411,7 @@ class GameScene extends Phaser.Scene {
   }
 
   _updateTrackMarks(dt) {
-    this.markOffset = (this.markOffset + this.speed * dt / (NEAR_Y - HORIZON_Y)) % 1;
+    this.markOffset = (this.markOffset + this.speed * dt / (ROAD_END_Y - HORIZON_Y)) % 1;
     for (const m of this.marks) {
       const t = (m.baseT + this.markOffset) % 1;
       const y = HORIZON_Y + t * (NEAR_Y - HORIZON_Y);
@@ -446,9 +447,9 @@ class GameScene extends Phaser.Scene {
 
   _updateSideScenery(dt) {
     for (const s of this.scenery) {
-      s.baseT = (s.baseT + this.speed * dt / (NEAR_Y - HORIZON_Y)) % 1;
+      s.baseT = (s.baseT + this.speed * dt / (ROAD_END_Y - HORIZON_Y)) % 1;
       const t = s.baseT;
-      const worldY = HORIZON_Y + t * (NEAR_Y - HORIZON_Y);
+      const worldY = HORIZON_Y + t * (ROAD_END_Y - HORIZON_Y);
       const sc = pSc(worldY);
       const trackHW = this._trackHalfWidth(t);
       const sx = this._curveCenterX(worldY) + s.side * (trackHW + Phaser.Math.Linear(14, 92, Math.pow(t, 1.28)));
@@ -686,8 +687,8 @@ class GameScene extends Phaser.Scene {
 
   _scheduleNextSpawn(extra = 0) {
     const difficulty = this._difficulty();
-    const minGap = Phaser.Math.Linear(1780, 1100, difficulty);
-    const maxGap = Phaser.Math.Linear(2850, 1780, difficulty);
+    const minGap = Phaser.Math.Linear(2450, 1750, difficulty);
+    const maxGap = Phaser.Math.Linear(3900, 2750, difficulty);
     this.spawnCursor = this.runTime + Phaser.Math.Between(Math.round(minGap), Math.round(maxGap)) + extra;
   }
 
@@ -696,18 +697,18 @@ class GameScene extends Phaser.Scene {
     if (this.runTime < SAFE_START_MS) return;
 
     const roll = Math.random();
-    if (roll < 0.07 + difficulty * 0.02) this._spawnShield();
-    else if (roll < 0.13 + difficulty * 0.03) this._spawnMagnet();
-    else if (roll < 0.31 + difficulty * 0.09) this._spawnWagon();
-    else if (roll < 0.49 + difficulty * 0.08) this._spawnCoinTrail(difficulty);
+    if (roll < 0.06 + difficulty * 0.02) this._spawnShield();
+    else if (roll < 0.12 + difficulty * 0.03) this._spawnMagnet();
+    else if (roll < 0.25 + difficulty * 0.06) this._spawnWagon();
+    else if (roll < 0.43 + difficulty * 0.08) this._spawnCoinTrail(difficulty);
     else this._spawnObstacle(this.time.now, difficulty);
     this._scheduleNextSpawn();
   }
 
   _spawnObstacle(time, difficulty = this._difficulty()) {
-    const blockedCount = Math.random() < 0.38 + difficulty * 0.22 ? 2 : 1;
+    const blockedCount = Math.random() < 0.24 + difficulty * 0.18 ? 2 : 1;
     const lanes = Phaser.Utils.Array.Shuffle([0, 1, 2]).slice(0, blockedCount);
-    const spawnGate = this.runTime > 6500 && Math.random() < 0.28 + difficulty * 0.18;
+    const spawnGate = this.runTime > 9000 && Math.random() < 0.2 + difficulty * 0.14;
     for (const lane of lanes) {
       if (spawnGate) {
         const beam = this.add.rectangle(0, 0, 1, 1, 0xc62828).setDepth(5);
@@ -746,13 +747,13 @@ class GameScene extends Phaser.Scene {
 
   _spawnCoinTrail(difficulty = this._difficulty()) {
     const lane = Phaser.Math.Between(0, 2);
-    const laneDrift = Math.random() < 0.35 + difficulty * 0.25 ? Phaser.Utils.Array.GetRandom([-1, 1]) : 0;
-    const count = Phaser.Math.Between(4, 7);
+    const laneDrift = Math.random() < 0.25 + difficulty * 0.2 ? Phaser.Utils.Array.GetRandom([-1, 1]) : 0;
+    const count = Phaser.Math.Between(3, 5);
     for (let i = 0; i < count; i++) {
       const trailLane = Phaser.Math.Clamp(lane + (i > count / 2 ? laneDrift : 0), 0, 2);
       const coin = this.add.circle(0, 0, 1, 0xffd700).setDepth(6);
       const shine = this.add.circle(0, 0, 1, 0xfff59d, 0.72).setDepth(7);
-      this.gameObjs.push({ type: 'coin', lane: trailLane, worldY: APPROACH_START_Y - i * 46, worldW: 28, worldH: 28, parts: [coin, shine], coin, shine, checked: false });
+      this.gameObjs.push({ type: 'coin', lane: trailLane, worldY: APPROACH_START_Y - i * 58, worldW: 28, worldH: 28, parts: [coin, shine], coin, shine, checked: false });
     }
   }
 
