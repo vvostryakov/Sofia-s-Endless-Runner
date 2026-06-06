@@ -5,19 +5,21 @@ const W = 400, H = 700;
 
 // ─── Perspective ──────────────────────────────────────────────────────────────
 const VP_X          = W / 2;
-const NEAR_Y        = 646;
-const PLAYER_HEAD_Y = NEAR_Y - 56;
+const NEAR_Y        = 654;
+const PLAYER_HEAD_Y = NEAR_Y - 64;
 const VP_Y          = PLAYER_HEAD_Y;
 const HORIZON_Y     = H / 2;
 const ROAD_END_Y    = NEAR_Y;
-const TRACK_FAR_HW  = 5;
-const TRACK_NEAR_HW = 286;
-const TUNNEL_NEAR_RX = 330;
-const TUNNEL_NEAR_RY = 240;
+const TRACK_FAR_HW  = 6;
+const TRACK_NEAR_HW = 302;
+const TUNNEL_NEAR_RX = 380;
+const TUNNEL_NEAR_RY = 330;
+const PLAYER_DRAW_SCALE = 1.72;
+const PLAYER_VISUAL_LIFT = 38;
 
 const pT  = y      => Phaser.Math.Clamp((y - HORIZON_Y) / (NEAR_Y - HORIZON_Y), 0, 1);
 const pEase = y    => Math.pow(pT(y), 1.55);
-const pSc = y      => 0.035 + pEase(y) * 1.12;
+const pSc = y      => 0.055 + pEase(y) * 1.48;
 const projectY = y => VP_Y + Math.pow(pT(y), 1.08) * (NEAR_Y - VP_Y);
 const eY  = (y, h) => projectY(y) - h * pSc(y);
 
@@ -333,7 +335,7 @@ class GameScene extends Phaser.Scene {
 
   _laneX(lane, y) {
     const t = pT(y);
-    return this._curveCenterX(y) + LANE_SIDE[lane] * this._trackHalfWidth(t) * 0.667;
+    return this._curveCenterX(y) + LANE_SIDE[lane] * this._trackHalfWidth(t) * 0.58;
   }
 
   _updateTrackCurve(delta) {
@@ -578,26 +580,28 @@ class GameScene extends Phaser.Scene {
 
   _syncPlayer(t) {
     const x = this.pX;
-    const sy = NEAR_Y - this.jumpH;
+    const sy = NEAR_Y - PLAYER_VISUAL_LIFT - this.jumpH;
     const grounded = this.jumpH < 2;
     const sliding = this.slideTimer > 0 && grounded;
     const swing = grounded && !sliding ? Math.sin(t / 88) : 0;
     const tilt = grounded ? 0 : Phaser.Math.Clamp(-this.jumpVel / 3000, -0.18, 0.18);
     const sFrac = Math.max(0.35, 1 - this.jumpH / 130);
-    const shieldScale = 1 + (this.shieldCharges > 0 ? Math.sin(t / 140) * 0.06 : 0);
-    this.vis.shield.setPosition(x, sy + 2).setScale(shieldScale).setVisible(this.shieldCharges > 0);
-    this.vis.magnet.setPosition(x, sy + 2).setScale(1 + Math.sin(t / 110) * 0.08).setVisible(this.magnetTimer > 0);
-    this.shadow.setPosition(x, NEAR_Y + 4).setScale(sFrac, sFrac * 0.45).setAlpha(sFrac * 0.5);
-    this.vis.legL.setPosition(x - (sliding ? 17 : 9), sy + (sliding ? 28 : 33)).setScale(sliding ? 1.55 : 1, sliding ? 0.52 : 1 + swing * 0.45).setRotation(sliding ? 0.35 : 0);
-    this.vis.legR.setPosition(x + (sliding ? 15 : 9), sy + (sliding ? 31 : 33)).setScale(sliding ? 1.55 : 1, sliding ? 0.52 : 1 - swing * 0.45).setRotation(sliding ? 0.35 : 0);
-    this.vis.body.setPosition(x, sy + (sliding ? 17 : 7)).setScale(1, sliding ? 0.62 : 1).setRotation(sliding ? Math.PI / 2 : tilt);
-    this.vis.backStripe.setPosition(x, sy + (sliding ? 17 : 7)).setScale(1, sliding ? 0.62 : 1).setRotation(sliding ? Math.PI / 2 : tilt);
-    this.vis.armL.setPosition(x - (sliding ? 18 : 23), sy + (sliding ? 19 : 7)).setRotation(sliding ? 1.15 : swing * 0.5);
-    this.vis.armR.setPosition(x + (sliding ? 18 : 23), sy + (sliding ? 19 : 7)).setRotation(sliding ? 1.15 : -swing * 0.5);
-    this.vis.head.setPosition(x + (sliding ? 31 : 0), sy + (sliding ? 11 : -22)).setRotation(sliding ? Math.PI / 2 : tilt);
-    this.vis.hair.setPosition(x + (sliding ? 38 : 0), sy + (sliding ? 10 : -29)).setRotation(sliding ? Math.PI / 2 : tilt);
-    this.vis.ponytail.setPosition(x + (sliding ? 24 : 0), sy + (sliding ? 22 : -17)).setRotation(sliding ? Math.PI / 2 : tilt);
-    this.vis.bow.setPosition(x + (sliding ? 19 : 0), sy + (sliding ? 23 : -18)).setRotation(sliding ? Math.PI / 2 : tilt);
+    const ps = PLAYER_DRAW_SCALE;
+    const pos = (offset) => offset * ps;
+    const shieldScale = ps * (1 + (this.shieldCharges > 0 ? Math.sin(t / 140) * 0.06 : 0));
+    this.vis.shield.setPosition(x, sy + pos(2)).setScale(shieldScale).setVisible(this.shieldCharges > 0);
+    this.vis.magnet.setPosition(x, sy + pos(2)).setScale(ps * (1 + Math.sin(t / 110) * 0.08)).setVisible(this.magnetTimer > 0);
+    this.shadow.setPosition(x, NEAR_Y + 4).setScale(sFrac * ps, sFrac * ps * 0.45).setAlpha(sFrac * 0.5);
+    this.vis.legL.setPosition(x - pos(sliding ? 17 : 9), sy + pos(sliding ? 28 : 33)).setScale(ps * (sliding ? 1.55 : 1), ps * (sliding ? 0.52 : 1 + swing * 0.45)).setRotation(sliding ? 0.35 : 0);
+    this.vis.legR.setPosition(x + pos(sliding ? 15 : 9), sy + pos(sliding ? 31 : 33)).setScale(ps * (sliding ? 1.55 : 1), ps * (sliding ? 0.52 : 1 - swing * 0.45)).setRotation(sliding ? 0.35 : 0);
+    this.vis.body.setPosition(x, sy + pos(sliding ? 17 : 7)).setScale(ps, ps * (sliding ? 0.62 : 1)).setRotation(sliding ? Math.PI / 2 : tilt);
+    this.vis.backStripe.setPosition(x, sy + pos(sliding ? 17 : 7)).setScale(ps, ps * (sliding ? 0.62 : 1)).setRotation(sliding ? Math.PI / 2 : tilt);
+    this.vis.armL.setPosition(x - pos(sliding ? 18 : 23), sy + pos(sliding ? 19 : 7)).setScale(ps).setRotation(sliding ? 1.15 : swing * 0.5);
+    this.vis.armR.setPosition(x + pos(sliding ? 18 : 23), sy + pos(sliding ? 19 : 7)).setScale(ps).setRotation(sliding ? 1.15 : -swing * 0.5);
+    this.vis.head.setPosition(x + pos(sliding ? 31 : 0), sy + pos(sliding ? 11 : -22)).setScale(ps).setRotation(sliding ? Math.PI / 2 : tilt);
+    this.vis.hair.setPosition(x + pos(sliding ? 38 : 0), sy + pos(sliding ? 10 : -29)).setScale(ps).setRotation(sliding ? Math.PI / 2 : tilt);
+    this.vis.ponytail.setPosition(x + pos(sliding ? 24 : 0), sy + pos(sliding ? 22 : -17)).setScale(ps).setRotation(sliding ? Math.PI / 2 : tilt);
+    this.vis.bow.setPosition(x + pos(sliding ? 19 : 0), sy + pos(sliding ? 23 : -18)).setScale(ps).setRotation(sliding ? Math.PI / 2 : tilt);
   }
 
   _buildUI() {
@@ -890,7 +894,7 @@ class GameScene extends Phaser.Scene {
       const sw = obj.worldW * sc;
       const postH = obj.worldH * sc;
       const beamH = Math.max(4, 12 * sc);
-      const topY = eY(y, 68);
+      const topY = eY(y, obj.worldH);
       obj.beam.setPosition(x, topY).setSize(sw, beamH).setDepth(dp);
       obj.glow.setPosition(x, topY).setSize(sw * 1.14, beamH * 1.85).setDepth(dp + 1).setAlpha(0.32 + Math.sin(this.time.now / 90) * 0.12);
       obj.postL.setPosition(x - sw / 2, topY + postH / 2).setSize(Math.max(3, 8 * sc), postH).setDepth(dp);
