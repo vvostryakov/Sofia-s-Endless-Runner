@@ -29,6 +29,10 @@ const TOUCH_THRESHOLD = 22;
 const SCORE_PER_SECOND = 15;
 const COIN_SCORE = 20;
 const SHIELD_SCORE = 50;
+const MAGNET_SCORE = 40;
+const SLIDE_DURATION = 620;
+const MAGNET_DURATION = 7600;
+const DOUBLE_JUMP_INIT = 370;
 const SAFE_START_MS = 1300;
 const STORAGE_KEYS = {
   bestScore: 'ser_best_score_v1',
@@ -107,7 +111,7 @@ class BootScene extends Phaser.Scene {
     this.panel.add(this.add.text(cx, cy - 58, bestSummary(), {
       fontSize: '18px', fontFamily: 'Arial', fill: '#b7e4ff',
     }).setOrigin(0.5));
-    this.panel.add(this.add.text(cx, cy - 12, 'Three lanes. Dodge obstacles. Grab shields. Jump onto wagons for coins.', {
+    this.panel.add(this.add.text(cx, cy - 12, 'Three lanes. Jump, double-jump, slide, chain combos, and grab power-ups.', {
       fontSize: '15px', fontFamily: 'Arial', fill: '#d4e3ff', align: 'center', wordWrap: { width: 330 },
     }).setOrigin(0.5));
 
@@ -128,13 +132,14 @@ class BootScene extends Phaser.Scene {
     this.panel.add(this.add.text(cx, 270,
       'Keyboard\n' +
       '← / A and → / D: switch lanes\n' +
-      '↑ / W / Space: jump\n' +
+      '↑ / W / Space: jump / double-jump\n' +
+      '↓ / S: slide or fast-drop\n' +
       'P or Esc: pause\n\n' +
       'Touch\n' +
       'Swipe left/right to switch lanes.\n' +
-      'Swipe up to jump. Tap the pause button when you need a break.\n\n' +
+      'Swipe up to jump, swipe down to slide. Tap pause when you need a break.\n\n' +
       'Goal\n' +
-      'Survive as long as possible. Obstacles end the run unless you clear them. Blue shields block one crash. Wagons are safe only if you land on top.', {
+      'Survive as long as possible. Jump crates, slide under red gates, collect coin trails, and land on wagons to build combos. Blue shields block one crash; purple magnets pull nearby coins.', {
       fontSize: '16px', fontFamily: 'Arial', fill: '#ffffff', align: 'center',
       lineSpacing: 8, wordWrap: { width: 310 },
     }).setOrigin(0.5));
@@ -185,6 +190,10 @@ class GameScene extends Phaser.Scene {
     this.spawnCursor = 0;
     this.combo = 1;
     this.shieldCharges = 0;
+    this.magnetTimer = 0;
+    this.slideTimer = 0;
+    this.jumpsUsed = 0;
+    this.level = 1;
 
     this.pLane = 1;
     this.pX = LANE_NX[1];
@@ -332,6 +341,7 @@ class GameScene extends Phaser.Scene {
       eyeL: this.add.circle(0, 0, 3, 0x1a1a2e).setDepth(d),
       eyeR: this.add.circle(0, 0, 3, 0x1a1a2e).setDepth(d),
       shield: this.add.ellipse(0, 0, 68, 88, 0x4fc3f7, 0.16).setStrokeStyle(3, 0x81d4fa, 0.92).setDepth(d + 1).setVisible(false),
+      magnet: this.add.circle(0, 0, 42, 0xba68c8, 0.12).setStrokeStyle(3, 0xf3e5f5, 0.8).setDepth(d + 1).setVisible(false),
     };
   }
 
@@ -339,30 +349,33 @@ class GameScene extends Phaser.Scene {
     const x = this.pX;
     const sy = NEAR_Y - this.jumpH;
     const grounded = this.jumpH < 2;
-    const swing = grounded ? Math.sin(t / 88) : 0;
+    const sliding = this.slideTimer > 0 && grounded;
+    const swing = grounded && !sliding ? Math.sin(t / 88) : 0;
     const tilt = grounded ? 0 : Phaser.Math.Clamp(-this.jumpVel / 3000, -0.18, 0.18);
     const sFrac = Math.max(0.35, 1 - this.jumpH / 130);
     const shieldScale = 1 + (this.shieldCharges > 0 ? Math.sin(t / 140) * 0.06 : 0);
     this.vis.shield.setPosition(x, sy + 2).setScale(shieldScale).setVisible(this.shieldCharges > 0);
+    this.vis.magnet.setPosition(x, sy + 2).setScale(1 + Math.sin(t / 110) * 0.08).setVisible(this.magnetTimer > 0);
     this.shadow.setPosition(x, NEAR_Y + 4).setScale(sFrac, sFrac * 0.45).setAlpha(sFrac * 0.5);
-    this.vis.legL.setPosition(x - 9, sy + 31).setScale(1, 1 + swing * 0.45);
-    this.vis.legR.setPosition(x + 9, sy + 31).setScale(1, 1 - swing * 0.45);
-    this.vis.body.setPosition(x, sy + 6).setRotation(tilt);
-    this.vis.armL.setPosition(x - 24, sy + 4).setRotation(swing * 0.5);
-    this.vis.armR.setPosition(x + 24, sy + 4).setRotation(-swing * 0.5);
-    this.vis.head.setPosition(x, sy - 22).setRotation(tilt);
-    this.vis.hair.setPosition(x, sy - 32).setRotation(tilt);
-    this.vis.eyeL.setPosition(x - 6, sy - 26);
-    this.vis.eyeR.setPosition(x + 6, sy - 26);
+    this.vis.legL.setPosition(x - (sliding ? 17 : 9), sy + (sliding ? 28 : 31)).setScale(sliding ? 1.55 : 1, sliding ? 0.52 : 1 + swing * 0.45).setRotation(sliding ? 0.35 : 0);
+    this.vis.legR.setPosition(x + (sliding ? 15 : 9), sy + (sliding ? 31 : 31)).setScale(sliding ? 1.55 : 1, sliding ? 0.52 : 1 - swing * 0.45).setRotation(sliding ? 0.35 : 0);
+    this.vis.body.setPosition(x, sy + (sliding ? 17 : 6)).setScale(1, sliding ? 0.62 : 1).setRotation(sliding ? Math.PI / 2 : tilt);
+    this.vis.armL.setPosition(x - (sliding ? 18 : 24), sy + (sliding ? 19 : 4)).setRotation(sliding ? 1.15 : swing * 0.5);
+    this.vis.armR.setPosition(x + (sliding ? 18 : 24), sy + (sliding ? 19 : 4)).setRotation(sliding ? 1.15 : -swing * 0.5);
+    this.vis.head.setPosition(x + (sliding ? 31 : 0), sy + (sliding ? 11 : -22)).setRotation(sliding ? Math.PI / 2 : tilt);
+    this.vis.hair.setPosition(x + (sliding ? 38 : 0), sy + (sliding ? 10 : -32)).setRotation(sliding ? Math.PI / 2 : tilt);
+    this.vis.eyeL.setPosition(x + (sliding ? 31 : -6), sy + (sliding ? 5 : -26));
+    this.vis.eyeR.setPosition(x + (sliding ? 31 : 6), sy + (sliding ? 17 : -26));
   }
 
   _buildUI() {
     this.add.rectangle(W / 2, 28, W, 56, 0x000000, 0.58).setDepth(20);
     this.scoreTxt = this.add.text(W / 2, 20, 'Score: 0', { fontSize: '18px', fontFamily: 'Arial', fill: '#fff' }).setOrigin(0.5).setDepth(21);
-    this.goalTxt = this.add.text(W / 2, 44, 'Survive · shields block one crash', { fontSize: '12px', fontFamily: 'Arial', fill: '#9ecbff' }).setOrigin(0.5).setDepth(21);
+    this.goalTxt = this.add.text(W / 2, 44, 'Level 1 · slide gates · double jump', { fontSize: '12px', fontFamily: 'Arial', fill: '#9ecbff' }).setOrigin(0.5).setDepth(21);
     this.add.circle(24, 28, 11, 0xffd700).setDepth(20);
     this.coinTxt = this.add.text(42, 28, '0', { fontSize: '20px', fontFamily: 'Arial', fill: '#ffd700' }).setOrigin(0, 0.5).setDepth(21);
-    this.shieldTxt = this.add.text(W - 66, 52, 'Shield: -', { fontSize: '12px', fontFamily: 'Arial Black, Arial', fill: '#81d4fa' }).setOrigin(0.5).setDepth(21);
+    this.shieldTxt = this.add.text(W - 72, 52, 'Shield: -', { fontSize: '12px', fontFamily: 'Arial Black, Arial', fill: '#81d4fa' }).setOrigin(0.5).setDepth(21);
+    this.powerTxt = this.add.text(70, 52, 'Magnet: -', { fontSize: '12px', fontFamily: 'Arial Black, Arial', fill: '#ce93d8' }).setOrigin(0.5).setDepth(21);
     this.pauseBtn = this.add.rectangle(W - 30, 28, 42, 34, 0x263238, 0.95).setInteractive({ useHandCursor: true }).setDepth(21);
     this.add.text(W - 30, 28, 'II', { fontSize: '18px', fontFamily: 'Arial Black, Arial', fill: '#fff' }).setOrigin(0.5).setDepth(22);
     this.pauseBtn.on('pointerdown', () => this._togglePause());
@@ -373,6 +386,7 @@ class GameScene extends Phaser.Scene {
     this.wKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W);
     this.aKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A);
     this.dKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D);
+    this.sKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S);
     this.spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
     this.pKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
     this.escKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
@@ -383,19 +397,35 @@ class GameScene extends Phaser.Scene {
       const dx = p.x - this._touch.x;
       const dy = p.y - this._touch.y;
       if (Math.abs(dy) > Math.abs(dx) && dy < -TOUCH_THRESHOLD) this._jump();
+      else if (Math.abs(dy) > Math.abs(dx) && dy > TOUCH_THRESHOLD) this._slide();
       else if (Math.abs(dx) > TOUCH_THRESHOLD) this._switchLane(dx > 0 ? 1 : -1);
       this._touch = null;
     });
   }
 
   _jump() {
-    if (!this.alive || this.pausedRun) return;
-    if (this.jumpH < 2 || this.rideTimer > 0) {
+    if (!this.alive || this.pausedRun || this.slideTimer > 0) return;
+    const grounded = this.jumpH < 2 || this.rideTimer > 0;
+    if (grounded || this.jumpsUsed < 2) {
       this.rideTimer = 0;
-      this.jumpVel = JUMP_INIT;
-      this.combo = 1;
+      this.jumpVel = grounded ? JUMP_INIT : DOUBLE_JUMP_INIT;
+      this.jumpsUsed = grounded ? 1 : this.jumpsUsed + 1;
+      this.combo = grounded ? 1 : Math.max(1, this.combo);
+      this._toast(grounded ? 'Jump' : 'Double jump', this.pX, NEAR_Y - this.jumpH - 80);
       audio.jump();
     }
+  }
+
+  _slide() {
+    if (!this.alive || this.pausedRun) return;
+    if (this.jumpH > 8) {
+      this.jumpVel = Math.min(this.jumpVel, -620);
+      this._toast('Fast drop', this.pX, NEAR_Y - this.jumpH - 60);
+      return;
+    }
+    this.slideTimer = SLIDE_DURATION;
+    this.combo = Math.max(1, this.combo);
+    audio.switchLane();
   }
 
   _switchLane(dir) {
@@ -465,8 +495,10 @@ class GameScene extends Phaser.Scene {
     if (this.runTime < SAFE_START_MS) return;
 
     const roll = Math.random();
-    if (roll < 0.08 + difficulty * 0.03) this._spawnShield();
-    else if (roll < 0.25 + difficulty * 0.13) this._spawnWagon();
+    if (roll < 0.07 + difficulty * 0.02) this._spawnShield();
+    else if (roll < 0.13 + difficulty * 0.03) this._spawnMagnet();
+    else if (roll < 0.31 + difficulty * 0.09) this._spawnWagon();
+    else if (roll < 0.49 + difficulty * 0.08) this._spawnCoinTrail(difficulty);
     else this._spawnObstacle(this.time.now, difficulty);
     this._scheduleNextSpawn();
   }
@@ -474,14 +506,23 @@ class GameScene extends Phaser.Scene {
   _spawnObstacle(time, difficulty = this._difficulty()) {
     const blockedCount = Math.random() < 0.38 + difficulty * 0.22 ? 2 : 1;
     const lanes = Phaser.Utils.Array.Shuffle([0, 1, 2]).slice(0, blockedCount);
+    const spawnGate = this.runTime > 6500 && Math.random() < 0.28 + difficulty * 0.18;
     for (const lane of lanes) {
-      const h = Phaser.Math.Between(42, 68);
-      const w = Phaser.Math.Between(30, 48);
-      const color = Phaser.Utils.Array.GetRandom([0xd32f2f, 0xe65100, 0x5d4037]);
-      const face = this.add.rectangle(0, 0, 1, 1, color).setDepth(5);
-      const top = this.add.rectangle(0, 0, 1, 1, Phaser.Display.Color.IntegerToColor(color).lighten(25).color32).setDepth(5);
-      const side = this.add.rectangle(0, 0, 1, 1, Phaser.Display.Color.IntegerToColor(color).darken(20).color32).setDepth(5);
-      this.gameObjs.push({ type: 'obstacle', lane, worldY: HORIZON_Y + 6, worldH: h, worldW: w, parts: [face, top, side], face, top, side, checked: false });
+      if (spawnGate) {
+        const beam = this.add.rectangle(0, 0, 1, 1, 0xc62828).setDepth(5);
+        const glow = this.add.rectangle(0, 0, 1, 1, 0xff8a80, 0.55).setDepth(6);
+        const postL = this.add.rectangle(0, 0, 1, 1, 0x5d4037).setDepth(5);
+        const postR = this.add.rectangle(0, 0, 1, 1, 0x5d4037).setDepth(5);
+        this.gameObjs.push({ type: 'gate', lane, worldY: HORIZON_Y + 6, worldH: 86, worldW: 74, parts: [beam, glow, postL, postR], beam, glow, postL, postR, checked: false });
+      } else {
+        const h = Phaser.Math.Between(42, 68);
+        const w = Phaser.Math.Between(30, 48);
+        const color = Phaser.Utils.Array.GetRandom([0xd32f2f, 0xe65100, 0x5d4037]);
+        const face = this.add.rectangle(0, 0, 1, 1, color).setDepth(5);
+        const top = this.add.rectangle(0, 0, 1, 1, Phaser.Display.Color.IntegerToColor(color).lighten(25).color32).setDepth(5);
+        const side = this.add.rectangle(0, 0, 1, 1, Phaser.Display.Color.IntegerToColor(color).darken(20).color32).setDepth(5);
+        this.gameObjs.push({ type: 'obstacle', lane, worldY: HORIZON_Y + 6, worldH: h, worldW: w, parts: [face, top, side], face, top, side, checked: false });
+      }
     }
   }
 
@@ -491,6 +532,27 @@ class GameScene extends Phaser.Scene {
     const core = this.add.circle(0, 0, 1, 0x81d4fa, 0.9).setDepth(6);
     const glint = this.add.circle(0, 0, 1, 0xffffff, 0.75).setDepth(7);
     this.gameObjs.push({ type: 'shield', lane, worldY: HORIZON_Y + 6, worldW: 44, worldH: 44, parts: [ring, core, glint], ring, core, glint, checked: false });
+  }
+
+
+  _spawnMagnet() {
+    const lane = Phaser.Math.Between(0, 2);
+    const ring = this.add.circle(0, 0, 1, 0x8e24aa, 0.2).setStrokeStyle(2, 0xf3e5f5, 0.95).setDepth(6);
+    const core = this.add.rectangle(0, 0, 1, 1, 0xba68c8).setDepth(7);
+    const spark = this.add.circle(0, 0, 1, 0xffffff, 0.82).setDepth(8);
+    this.gameObjs.push({ type: 'magnet', lane, worldY: HORIZON_Y + 6, worldW: 44, worldH: 44, parts: [ring, core, spark], ring, core, spark, checked: false });
+  }
+
+  _spawnCoinTrail(difficulty = this._difficulty()) {
+    const lane = Phaser.Math.Between(0, 2);
+    const laneDrift = Math.random() < 0.35 + difficulty * 0.25 ? Phaser.Utils.Array.GetRandom([-1, 1]) : 0;
+    const count = Phaser.Math.Between(4, 7);
+    for (let i = 0; i < count; i++) {
+      const trailLane = Phaser.Math.Clamp(lane + (i > count / 2 ? laneDrift : 0), 0, 2);
+      const coin = this.add.circle(0, 0, 1, 0xffd700).setDepth(6);
+      const shine = this.add.circle(0, 0, 1, 0xfff59d, 0.72).setDepth(7);
+      this.gameObjs.push({ type: 'coin', lane: trailLane, worldY: HORIZON_Y + 6 - i * 46, worldW: 28, worldH: 28, parts: [coin, shine], coin, shine, checked: false });
+    }
   }
 
   _spawnWagon() {
@@ -531,13 +593,37 @@ class GameScene extends Phaser.Scene {
       obj.side.setPosition(x + sw / 2 + sdw / 2, fy).setSize(sdw, sh).setDepth(dp);
     }
 
-    if (obj.type === 'shield') {
+    if (obj.type === 'gate') {
+      const sw = obj.worldW * sc;
+      const postH = obj.worldH * sc;
+      const beamH = Math.max(4, 12 * sc);
+      const topY = eY(y, 68);
+      obj.beam.setPosition(x, topY).setSize(sw, beamH).setDepth(dp);
+      obj.glow.setPosition(x, topY).setSize(sw * 1.14, beamH * 1.85).setDepth(dp + 1).setAlpha(0.32 + Math.sin(this.time.now / 90) * 0.12);
+      obj.postL.setPosition(x - sw / 2, topY + postH / 2).setSize(Math.max(3, 8 * sc), postH).setDepth(dp);
+      obj.postR.setPosition(x + sw / 2, topY + postH / 2).setSize(Math.max(3, 8 * sc), postH).setDepth(dp);
+    }
+
+    if (obj.type === 'shield' || obj.type === 'magnet') {
       const pulse = 1 + Math.sin(this.time.now / 130) * 0.08;
       const r = Math.max(3, 18 * sc * pulse);
       const cy = eY(y, 48);
       obj.ring.setPosition(x, cy).setRadius(r).setDepth(dp + 1);
-      obj.core.setPosition(x, cy).setRadius(Math.max(2, r * 0.58)).setDepth(dp + 2);
-      obj.glint.setPosition(x - r * 0.26, cy - r * 0.32).setRadius(Math.max(1, r * 0.2)).setDepth(dp + 3);
+      if (obj.type === 'shield') {
+        obj.core.setPosition(x, cy).setRadius(Math.max(2, r * 0.58)).setDepth(dp + 2);
+        obj.glint.setPosition(x - r * 0.26, cy - r * 0.32).setRadius(Math.max(1, r * 0.2)).setDepth(dp + 3);
+      } else {
+        obj.core.setPosition(x, cy).setSize(Math.max(4, r * 0.95), Math.max(5, r * 1.25)).setRotation(Math.sin(this.time.now / 180) * 0.25).setDepth(dp + 2);
+        obj.spark.setPosition(x + r * 0.35, cy - r * 0.35).setRadius(Math.max(1, r * 0.22)).setDepth(dp + 3);
+      }
+    }
+
+    if (obj.type === 'coin') {
+      const pulse = 1 + Math.sin(this.time.now / 115 + obj.worldY) * 0.08;
+      const r = Math.max(2, 10 * sc * pulse);
+      const cy = eY(y, 42);
+      obj.coin.setPosition(x, cy).setRadius(r).setDepth(dp + 1);
+      obj.shine.setPosition(x - r * 0.3, cy - r * 0.35).setRadius(Math.max(1, r * 0.4)).setDepth(dp + 2);
     }
 
     if (obj.type === 'wagon') {
@@ -564,7 +650,11 @@ class GameScene extends Phaser.Scene {
   }
 
   _handleCollision(obj) {
-    if (obj.checked || obj.lane !== this.pLane) return;
+    if (obj.checked) return;
+    const laneDelta = Math.abs(obj.lane - this.pLane);
+    const magnetGrab = this.magnetTimer > 0 && (obj.type === 'coin' || obj.type === 'magnet') && laneDelta <= 1;
+    if (laneDelta > 0 && !magnetGrab) return;
+
     if (obj.type === 'shield') {
       obj.checked = true;
       obj.consumed = true;
@@ -574,6 +664,30 @@ class GameScene extends Phaser.Scene {
       audio.powerUp();
       return;
     }
+
+    if (obj.type === 'magnet') {
+      obj.checked = true;
+      obj.consumed = true;
+      this.magnetTimer = MAGNET_DURATION;
+      this._updatePowerUI();
+      this._addScore(MAGNET_SCORE, 'Magnet on');
+      audio.powerUp();
+      return;
+    }
+
+    if (obj.type === 'coin') {
+      this._collectLooseCoin(obj, magnetGrab ? 'Magnet' : null);
+      return;
+    }
+
+    if (obj.type === 'gate') {
+      obj.checked = true;
+      const cleared = this.slideTimer > 0 || this.jumpH > 76;
+      if (cleared) this._addScore(12, this.slideTimer > 0 ? 'Slide!' : 'Vault!');
+      else if (this._consumeShield('Shield blocked gate')) obj.consumed = true;
+      else this._gameOver('Slide under red gates');
+    }
+
     if (obj.type === 'obstacle') {
       obj.checked = true;
       if (this.jumpH < obj.worldH - 8) {
@@ -609,6 +723,21 @@ class GameScene extends Phaser.Scene {
         else this._gameOver('Hit a wagon');
       }
     }
+  }
+
+  _collectLooseCoin(obj, label = null) {
+    obj.checked = true;
+    obj.consumed = true;
+    this.coinCount++;
+    this.combo = Math.min(this.combo + 0.25, 5);
+    this._addScore(Math.round(COIN_SCORE * this.combo), label || (this.combo >= 2 ? `Streak x${this.combo.toFixed(1)}` : null));
+    this.coinTxt.setText(this.coinCount);
+    this._coinPop(obj.coin.x, obj.coin.y);
+    audio.coin();
+  }
+
+  _updatePowerUI() {
+    this.powerTxt.setText(this.magnetTimer > 0 ? `Magnet: ${Math.ceil(this.magnetTimer / 1000)}s` : 'Magnet: -');
   }
 
   _updateShieldUI() {
@@ -687,10 +816,18 @@ class GameScene extends Phaser.Scene {
     this.runTime += delta;
     this.distance += this.speed * dt;
     this.speed = Math.min(MAX_SPEED, BASE_SPEED + this.runTime * 0.0027 + this.distance * 0.015);
-    this.score += SCORE_PER_SECOND * dt;
+    this.level = 1 + Math.floor(this.distance / 950);
+    this.score += SCORE_PER_SECOND * dt * (1 + Math.min(0.5, (this.combo - 1) * 0.08));
     this.scoreTxt.setText('Score: ' + Math.floor(this.score));
+    this.goalTxt.setText(`Level ${this.level} · ${Math.round(this.speed)} speed · Combo x${this.combo.toFixed(1)}`);
+    if (this.magnetTimer > 0) {
+      this.magnetTimer = Math.max(0, this.magnetTimer - delta);
+      this._updatePowerUI();
+    }
+    if (this.slideTimer > 0) this.slideTimer = Math.max(0, this.slideTimer - delta);
 
     if (Phaser.Input.Keyboard.JustDown(this.cursors.up) || Phaser.Input.Keyboard.JustDown(this.wKey) || Phaser.Input.Keyboard.JustDown(this.spaceKey)) this._jump();
+    if (Phaser.Input.Keyboard.JustDown(this.cursors.down) || Phaser.Input.Keyboard.JustDown(this.sKey)) this._slide();
     if (Phaser.Input.Keyboard.JustDown(this.cursors.left) || Phaser.Input.Keyboard.JustDown(this.aKey)) this._switchLane(-1);
     if (Phaser.Input.Keyboard.JustDown(this.cursors.right) || Phaser.Input.Keyboard.JustDown(this.dKey)) this._switchLane(1);
 
@@ -704,7 +841,7 @@ class GameScene extends Phaser.Scene {
     } else {
       this.jumpVel -= GRAVITY * dt;
       this.jumpH += this.jumpVel * dt;
-      if (this.jumpH <= 0) { this.jumpH = 0; this.jumpVel = 0; }
+      if (this.jumpH <= 0) { this.jumpH = 0; this.jumpVel = 0; this.jumpsUsed = 0; }
     }
 
     for (let i = this.gameObjs.length - 1; i >= 0; i--) {
