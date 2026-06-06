@@ -331,14 +331,15 @@ class GameScene extends Phaser.Scene {
 
 const config = {
   type: Phaser.AUTO,
-  width: W,
-  height: H,
   backgroundColor: '#0f3460',
   physics: { default: 'arcade', arcade: { gravity: { y: 0 }, debug: false } },
   scene: [BootScene, GameScene],
   scale: {
+    parent: 'game-container',
     mode: Phaser.Scale.FIT,
-    autoCenter: Phaser.Scale.CENTER_BOTH
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+    width: W,
+    height: H,
   }
 };
 
