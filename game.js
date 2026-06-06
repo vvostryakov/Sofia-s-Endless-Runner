@@ -59,13 +59,14 @@ const STORAGE_KEYS = {
 
 const saveNumber = (key, value) => localStorage.setItem(key, String(Math.max(0, Math.floor(value))));
 const loadNumber = (key) => Number(localStorage.getItem(key) || 0);
-const unlockAudio = () => {
-  if (window.audio && typeof audio.unlock === 'function') audio.unlock();
-};
 const setAudioMuted = (muted) => {
   if (window.audio && typeof audio.setMuted === 'function') audio.setMuted(muted);
 };
 const bestSummary = () => `Best: ${loadNumber(STORAGE_KEYS.bestScore)} · Coins: ${loadNumber(STORAGE_KEYS.bestCoins)}`;
+const appVersionLabel = () => {
+  const version = window.APP_VERSION || {};
+  return `Version: ${version.label || version.commit || 'local-dev'}`;
+};
 
 // ─── Boot / menu scene ────────────────────────────────────────────────────────
 class BootScene extends Phaser.Scene {
@@ -77,14 +78,9 @@ class BootScene extends Phaser.Scene {
     this._buildBackground();
     this._showMenu();
 
-    const startMusic = () => {
-      unlockAudio();
-      if (!this.muted) audio.playMenu();
-    };
+    const startMusic = () => audio.playMenu();
     this.input.once('pointerdown', startMusic);
     this.input.keyboard.once('keydown', startMusic);
-    document.addEventListener('touchend', unlockAudio, { once: true, passive: true });
-    document.addEventListener('click', unlockAudio, { once: true, passive: true });
     this.input.keyboard.on('keydown-SPACE', () => this._activatePrimary());
     this.input.keyboard.on('keydown-ENTER', () => this._activatePrimary());
   }
@@ -115,10 +111,7 @@ class BootScene extends Phaser.Scene {
       fontFamily: 'Arial Black, Arial',
       fill: '#fff',
     }).setOrigin(0.5);
-    r.on('pointerdown', () => {
-      unlockAudio();
-      onPress();
-    });
+    r.on('pointerdown', onPress);
     this.panel.add([r, t]);
     return r;
   }
@@ -146,6 +139,9 @@ class BootScene extends Phaser.Scene {
     this._button(cx, cy + 108, 220, 48, 'RHYTHM RUN', () => this._startRun(true), 0x8e24aa);
     this._button(cx, cy + 164, 220, 40, 'HOW TO PLAY', () => this._showHowTo(), 0x3949ab);
     this._button(cx, cy + 214, 220, 36, this.muted ? 'SOUND: OFF' : 'SOUND: ON', () => this._toggleSound(), 0x455a64);
+    this.panel.add(this.add.text(cx, H - 24, appVersionLabel(), {
+      fontSize: '12px', fontFamily: 'Arial', fill: '#8fa7c7',
+    }).setOrigin(0.5));
 
   }
 
@@ -178,7 +174,6 @@ class BootScene extends Phaser.Scene {
   }
 
   _activatePrimary() {
-    unlockAudio();
     if (this.mode === 'help') {
       localStorage.setItem(STORAGE_KEYS.seenHelp, '1');
       this._showMenu();
@@ -196,7 +191,6 @@ class BootScene extends Phaser.Scene {
   }
 
   _startRun(rhythmMode = false) {
-    unlockAudio();
     if (localStorage.getItem(STORAGE_KEYS.seenHelp) !== '1') {
       localStorage.setItem(STORAGE_KEYS.seenHelp, '1');
     }
@@ -604,7 +598,7 @@ class GameScene extends Phaser.Scene {
     this.powerTxt = this.add.text(70, 52, 'Magnet: -', { fontSize: '12px', fontFamily: 'Arial Black, Arial', fill: '#ce93d8' }).setOrigin(0.5).setDepth(21);
     this.pauseBtn = this.add.rectangle(W - 30, 28, 42, 34, 0x263238, 0.95).setInteractive({ useHandCursor: true }).setDepth(21);
     this.add.text(W - 30, 28, 'II', { fontSize: '18px', fontFamily: 'Arial Black, Arial', fill: '#fff' }).setOrigin(0.5).setDepth(22);
-    this.pauseBtn.on('pointerdown', () => { unlockAudio(); this._togglePause(); });
+    this.pauseBtn.on('pointerdown', () => this._togglePause());
   }
 
   _buildControls() {
@@ -617,7 +611,7 @@ class GameScene extends Phaser.Scene {
     this.pKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
     this.escKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
 
-    this.input.on('pointerdown', p => { unlockAudio(); this._touch = { x: p.x, y: p.y, t: this.time.now }; });
+    this.input.on('pointerdown', p => { this._touch = { x: p.x, y: p.y, t: this.time.now }; });
     this.input.on('pointerup', p => {
       if (!this._touch || this.pausedRun || !this.alive) return;
       const dx = p.x - this._touch.x;
@@ -687,8 +681,8 @@ class GameScene extends Phaser.Scene {
     this.pauseOverlay.add([resume, menu]);
     this.pauseOverlay.add(this.add.text(W / 2, H / 2 + 5, 'RESUME', { fontSize: '22px', fontFamily: 'Arial Black, Arial', fill: '#fff' }).setOrigin(0.5));
     this.pauseOverlay.add(this.add.text(W / 2, H / 2 + 76, 'MAIN MENU', { fontSize: '18px', fontFamily: 'Arial Black, Arial', fill: '#fff' }).setOrigin(0.5));
-    resume.on('pointerdown', () => { unlockAudio(); this._togglePause(); });
-    menu.on('pointerdown', () => { unlockAudio(); audio.stop(); this.scene.start('Boot'); });
+    resume.on('pointerdown', () => this._togglePause());
+    menu.on('pointerdown', () => { audio.stop(); this.scene.start('Boot'); });
   }
 
   _hidePauseOverlay() {
@@ -1135,11 +1129,11 @@ class GameScene extends Phaser.Scene {
       else audio.playGame();
       this.scene.restart({ rhythmMode: this.rhythmMode });
     };
-    restartBtn.on('pointerdown', () => { unlockAudio(); restart(); });
-    menuBtn.on('pointerdown', () => { unlockAudio(); audio.stop(); this.scene.start('Boot'); });
+    restartBtn.on('pointerdown', restart);
+    menuBtn.on('pointerdown', () => { audio.stop(); this.scene.start('Boot'); });
     this.time.delayedCall(350, () => {
-      this.input.keyboard.once('keydown-SPACE', () => { unlockAudio(); restart(); });
-      this.input.keyboard.once('keydown-ENTER', () => { unlockAudio(); restart(); });
+      this.input.keyboard.once('keydown-SPACE', restart);
+      this.input.keyboard.once('keydown-ENTER', restart);
     });
   }
 
