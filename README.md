@@ -36,9 +36,13 @@ Choose **RHYTHM RUN** from the main menu to start the same runner with a built-i
 2. Set **Source** to `GitHub Actions`
 3. Push any commit — the workflow deploys automatically
 
+## App version
+
+The main menu shows `Version: ...` at the bottom of the screen. Locally this uses the committed `version.js` fallback, while the GitHub Pages deploy workflow rewrites `version.js` with the current commit SHA and UTC deploy timestamp before publishing. The same workflow also adds the commit SHA as a cache-busting query string for app scripts. This makes every deployed PR or branch commit visibly identifiable in the app.
+
 ## Dev
 
-No build step. Edit `game.js`, `audio.js`, or `index.html` and refresh the browser.
+No build step. Edit `game.js`, `audio.js`, `version.js`, or `index.html` and refresh the browser.
 
 Useful local checks:
 
