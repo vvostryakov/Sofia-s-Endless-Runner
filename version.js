@@ -1,5 +1,5 @@
 window.APP_VERSION = {
-  label: 'c59742a',
-  commit: 'c59742ab8f84105e1c36afa1f0df15e1f15b5ce2',
-  builtAt: '2026-06-06T17:46:38Z',
+  label: 'e360bc4',
+  commit: 'e360bc4cc2d77e37a9a06a94b94c86aff1f3417d',
+  builtAt: '2026-06-06T17:52:57Z',
 };
