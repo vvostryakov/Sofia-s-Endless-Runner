@@ -6,9 +6,9 @@ const W = 400, H = 700;
 // ─── Perspective ──────────────────────────────────────────────────────────────
 const VP_X          = W / 2;
 const NEAR_Y        = 654;
-const PLAYER_HEAD_Y = NEAR_Y - 64;
-const VP_Y          = PLAYER_HEAD_Y;
 const HORIZON_Y     = H / 2;
+const CAMERA_LOOK_Y = HORIZON_Y - 44;
+const VP_Y          = CAMERA_LOOK_Y;
 const ROAD_END_Y    = NEAR_Y;
 const TRACK_FAR_HW  = 6;
 const TRACK_NEAR_HW = 302;
@@ -277,9 +277,9 @@ class GameScene extends Phaser.Scene {
     sky.fillGradientStyle(0x030711, 0x030711, 0x0a1220, 0x0a1220, 1);
     sky.fillRect(0, 0, W, H);
 
-    // The run reads as a camera flying through a tunnel. The visual vanishing
-    // point sits around Sofia's head, and every background detail expands away
-    // from that same point so the scene keeps one coherent perspective.
+    // The run reads as a camera flying through a tunnel from a third-person,
+    // slightly elevated angle. The vanishing point sits above Sofia instead of
+    // directly behind her head, so upcoming obstacles remain visible over her.
     const tunnelGlow = this.add.graphics().setDepth(0.4);
     tunnelGlow.fillStyle(0x0a1a2f, 0.92);
     tunnelGlow.fillEllipse(VP_X, VP_Y, TUNNEL_NEAR_RX * 2.1, TUNNEL_NEAR_RY * 2.05);
