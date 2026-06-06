@@ -4,16 +4,19 @@
 const W = 400, H = 700;
 
 // ─── Perspective ──────────────────────────────────────────────────────────────
-const VP_X          = 200;
-const HORIZON_Y     = 154;
+const VP_X          = W / 2;
+const VP_Y          = H / 2;
+const HORIZON_Y     = VP_Y;
 const NEAR_Y        = 646;
 const ROAD_END_Y    = H + 92;
-const TRACK_FAR_HW  = 8;
-const TRACK_NEAR_HW = 274;
+const TRACK_FAR_HW  = 5;
+const TRACK_NEAR_HW = 286;
+const TUNNEL_NEAR_RX = 330;
+const TUNNEL_NEAR_RY = 390;
 
 const pT  = y      => Phaser.Math.Clamp((y - HORIZON_Y) / (NEAR_Y - HORIZON_Y), 0, 1);
-const pEase = y    => Math.pow(pT(y), 1.72);
-const pSc = y      => 0.035 + pEase(y) * 1.08;
+const pEase = y    => Math.pow(pT(y), 1.55);
+const pSc = y      => 0.035 + pEase(y) * 1.12;
 const eY  = (y, h) => y - h * pSc(y);
 
 // ─── MVP tuning ───────────────────────────────────────────────────────────────
@@ -24,7 +27,7 @@ const WAGON_LENGTH = 185;
 const WAGON_LANDING_GRACE = 26;
 const WAGON_RIDE_MIN_MS = 1150;
 const WAGON_RIDE_MAX_MS = 2200;
-const APPROACH_START_Y = HORIZON_Y + 2;
+const APPROACH_START_Y = HORIZON_Y + 1;
 const BASE_SPEED = 145;
 const MAX_SPEED = 430;
 const TOUCH_THRESHOLD = 22;
@@ -250,38 +253,30 @@ class GameScene extends Phaser.Scene {
     sky.fillGradientStyle(0x030711, 0x030711, 0x0a1220, 0x0a1220, 1);
     sky.fillRect(0, 0, W, H);
 
+    // The run now reads as a camera flying through a tunnel: the vanishing
+    // point is in the middle of the screen, and every background detail expands
+    // away from that point instead of falling from a high horizon.
+    const tunnelGlow = this.add.graphics().setDepth(0.4);
+    tunnelGlow.fillStyle(0x0a1a2f, 0.92);
+    tunnelGlow.fillEllipse(VP_X, VP_Y, TUNNEL_NEAR_RX * 2.1, TUNNEL_NEAR_RY * 2.05);
+    tunnelGlow.fillStyle(0x020409, 0.78);
+    tunnelGlow.fillCircle(VP_X, VP_Y, 60);
+    tunnelGlow.lineStyle(2, 0x51b7ff, 0.2);
+    tunnelGlow.strokeCircle(VP_X, VP_Y, 68);
+
     for (let i = 0; i < 80; i++) {
-      const y = Phaser.Math.Between(0, HORIZON_Y + 85);
-      const tunnelFade = 1 - Math.max(0, y - HORIZON_Y + 25) / 120;
-      this.add.circle(
-        Phaser.Math.Between(0, W), y,
-        Math.random() < 0.18 ? 2 : 1, 0xffffff
-      ).setAlpha(Phaser.Math.FloatBetween(0.08, 0.72) * Phaser.Math.Clamp(tunnelFade, 0.22, 1));
+      const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+      const radius = Phaser.Math.FloatBetween(48, Math.max(W, H) * 0.72);
+      const x = VP_X + Math.cos(angle) * radius * Phaser.Math.FloatBetween(0.72, 1.08);
+      const y = VP_Y + Math.sin(angle) * radius * Phaser.Math.FloatBetween(0.58, 1.0);
+      if (x < -12 || x > W + 12 || y < -12 || y > H + 12) continue;
+      const dist = Phaser.Math.Distance.Between(VP_X, VP_Y, x, y);
+      const alpha = Phaser.Math.Clamp(dist / 420, 0.16, 0.76);
+      this.add.circle(x, y, Math.random() < 0.18 ? 2 : 1, 0xffffff).setAlpha(alpha);
     }
 
-    this.add.circle(314, 48, 24, 0xfff9c4).setAlpha(0.68);
-    this.add.circle(304, 42, 19, 0x0a1220).setAlpha(0.55);
-
-    const city = this.add.graphics().setDepth(1);
-    city.fillStyle(0x07111f, 1);
-    [[0,86,36],[40,118,32],[78,74,42],[122,106,32],[158,88,26],[188,120,48],[242,68,38],
-     [286,94,34],[324,80,38],[366,100,32]].forEach(([x, bh, bw]) => {
-      city.fillRect(x, HORIZON_Y + 18 - bh, bw, bh);
-      for (let wy = HORIZON_Y + 22 - bh; wy < HORIZON_Y + 12; wy += 14) {
-        for (let wx = x + 4; wx < x + bw - 4; wx += 10) {
-          if (Math.random() > 0.58) city.fillStyle(0xffe082, 1).fillRect(wx, wy, 4, 6);
-        }
-      }
-      city.fillStyle(0x07111f, 1);
-    });
-    city.setAlpha(0.72);
-
-    const tunnel = this.add.graphics().setDepth(1.5);
-    tunnel.fillGradientStyle(0x121827, 0x121827, 0x070a10, 0x070a10, 1);
-    tunnel.fillRect(0, HORIZON_Y - 18, W, ROAD_END_Y - HORIZON_Y + 28);
-    tunnel.fillStyle(0x020409, 0.34);
-    tunnel.fillTriangle(0, ROAD_END_Y + 20, VP_X - 10, HORIZON_Y - 8, 0, HORIZON_Y + 110);
-    tunnel.fillTriangle(W, ROAD_END_Y + 20, VP_X + 10, HORIZON_Y - 8, W, HORIZON_Y + 110);
+    this.add.circle(318, 62, 24, 0xfff9c4).setAlpha(0.48);
+    this.add.circle(308, 56, 19, 0x0a1220).setAlpha(0.55);
   }
 
   _trackHalfWidth(t) {
@@ -297,6 +292,21 @@ class GameScene extends Phaser.Scene {
 
   _curveCenterX(y) {
     return VP_X + this._curveOffset(y);
+  }
+
+  _tunnelPoint(t, angle) {
+    const q = Math.pow(Phaser.Math.Clamp(t, 0, 1), 1.08);
+    const y = HORIZON_Y + t * (ROAD_END_Y - HORIZON_Y);
+    const cx = this._curveCenterX(y);
+    const rx = 8 + q * TUNNEL_NEAR_RX;
+    const ry = 6 + q * TUNNEL_NEAR_RY;
+    return { x: cx + Math.cos(angle) * rx, y: VP_Y + Math.sin(angle) * ry };
+  }
+
+  _tunnelRing(t, steps = 36) {
+    const points = [];
+    for (let i = 0; i <= steps; i++) points.push(this._tunnelPoint(t, (i / steps) * Math.PI * 2));
+    return points;
   }
 
   _laneX(lane, y) {
@@ -327,18 +337,18 @@ class GameScene extends Phaser.Scene {
     g.clear();
     hg.clear();
 
-    hg.fillGradientStyle(0x102d4f, 0x102d4f, 0x03070f, 0x03070f, 1);
-    hg.fillRect(0, HORIZON_Y - 26, W, 62);
-    hg.fillStyle(0x00131f, 0.78);
-    hg.fillCircle(VP_X, HORIZON_Y + 4, 54);
+    hg.fillGradientStyle(0x06111f, 0x06111f, 0x02040a, 0x02040a, 1);
+    hg.fillRect(0, 0, W, H);
+    hg.fillStyle(0x00131f, 0.86);
+    hg.fillCircle(VP_X, VP_Y, 58);
     hg.lineStyle(2, 0x51b7ff, 0.22);
-    hg.strokeCircle(VP_X, HORIZON_Y + 4, 58);
+    hg.strokeCircle(VP_X, VP_Y, 65);
 
+    const segments = 30;
     const left = [];
     const right = [];
     const lane1 = [];
     const lane2 = [];
-    const segments = 28;
     for (let i = 0; i <= segments; i++) {
       const t = i / segments;
       const y = HORIZON_Y + t * (ROAD_END_Y - HORIZON_Y);
@@ -351,16 +361,60 @@ class GameScene extends Phaser.Scene {
       lane2.push({ x: cx + hw * 0.333, y });
     }
 
+    const ringStroke = (t, color, alpha, width = 1) => {
+      const ring = this._tunnelRing(t);
+      g.lineStyle(width, color, alpha);
+      g.beginPath();
+      g.moveTo(ring[0].x, ring[0].y);
+      for (let i = 1; i < ring.length; i++) g.lineTo(ring[i].x, ring[i].y);
+      g.strokePath();
+    };
+
+    // Static radial tunnel shell. The ceiling, walls, and floor all share the
+    // same central vanishing point, so the environment expands toward the player
+    // uniformly in every direction.
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const alpha = 0.018 + t * 0.035;
+      if (i % 2 === 0) ringStroke(t, 0x244660, alpha, Math.max(1, t * 2));
+    }
+
+    for (let i = 0; i < 24; i++) {
+      const angle = (i / 24) * Math.PI * 2;
+      const inner = this._tunnelPoint(0.03, angle);
+      const outer = this._tunnelPoint(1, angle);
+      const sideGlow = Math.abs(Math.sin(angle));
+      g.lineStyle(1, 0x2f5f86, 0.035 + sideGlow * 0.04);
+      g.beginPath();
+      g.moveTo(inner.x, inner.y);
+      g.lineTo(outer.x, outer.y);
+      g.strokePath();
+    }
+
+    // Animated depth rings expand from the center to the top, bottom, and sides.
+    // This is the main forward-motion cue for the tunnel effect.
+    for (let i = 0; i < 12; i++) {
+      const t = (i / 12 + this.markOffset) % 1;
+      const pulseT = Math.max(t, 0.025);
+      ringStroke(pulseT, 0x80deea, 0.05 + pulseT * 0.18, Math.max(1, pulseT * 4));
+    }
+
     const wallLeft = left.map((pt, i) => {
       const t = i / segments;
-      return { x: pt.x - Phaser.Math.Linear(10, 118, Math.pow(t, 1.35)), y: pt.y + 6 * t };
+      const side = this._tunnelPoint(t, Math.PI * 0.92);
+      return { x: side.x, y: Math.max(side.y, pt.y - 42 * (1 - t)) };
     });
     const wallRight = right.map((pt, i) => {
       const t = i / segments;
-      return { x: pt.x + Phaser.Math.Linear(10, 118, Math.pow(t, 1.35)), y: pt.y + 6 * t };
+      const side = this._tunnelPoint(t, Math.PI * 0.08);
+      return { x: side.x, y: Math.max(side.y, pt.y - 42 * (1 - t)) };
     });
 
-    g.fillStyle(0x101827, 1);
+    const ceilLeft = left.map((pt, i) => this._tunnelPoint(i / segments, Math.PI * 1.22));
+    const ceilRight = right.map((pt, i) => this._tunnelPoint(i / segments, Math.PI * 1.78));
+    g.fillStyle(0x070d18, 0.78);
+    g.fillPoints([...ceilLeft, ...ceilRight.slice().reverse()], true);
+    g.fillStyle(0x101827, 0.92);
     g.fillPoints([...wallLeft, ...left.slice().reverse()], true);
     g.fillPoints([...right, ...wallRight.slice().reverse()], true);
 
@@ -375,6 +429,8 @@ class GameScene extends Phaser.Scene {
       g.strokePath();
     };
 
+    strokeLine(ceilLeft, 2, 0x19314a, 0.62);
+    strokeLine(ceilRight, 2, 0x19314a, 0.62);
     strokeLine(wallLeft, 2, 0x263f5b, 0.8);
     strokeLine(wallRight, 2, 0x263f5b, 0.8);
     strokeLine(left, 4, 0x6ec6ff, 0.7);
@@ -382,12 +438,9 @@ class GameScene extends Phaser.Scene {
     strokeLine(lane1, 2, 0xb0bec5, 0.62);
     strokeLine(lane2, 2, 0xb0bec5, 0.62);
 
-    // Draw tunnel ribs from the near edge back to the vanishing point. These
-    // converging rails are what make the game read as a Subway-Surfers-style
-    // forward camera instead of a flat 2D board.
     for (let i = 1; i < segments; i += 3) {
       const t = i / segments;
-      const alpha = 0.08 + t * 0.22;
+      const alpha = 0.08 + t * 0.2;
       g.lineStyle(Math.max(1, 3 * t), 0x80deea, alpha);
       g.beginPath();
       g.moveTo(wallLeft[i].x, wallLeft[i].y);
@@ -449,30 +502,35 @@ class GameScene extends Phaser.Scene {
   _updateSideScenery(dt) {
     for (const s of this.scenery) {
       s.baseT = (s.baseT + this.speed * dt / (ROAD_END_Y - HORIZON_Y)) % 1;
-      const t = s.baseT;
-      const worldY = HORIZON_Y + t * (ROAD_END_Y - HORIZON_Y);
-      const sc = pSc(worldY);
-      const trackHW = this._trackHalfWidth(t);
-      const sx = this._curveCenterX(worldY) + s.side * (trackHW + Phaser.Math.Linear(14, 92, Math.pow(t, 1.28)));
+      const t = Math.max(s.baseT, 0.02);
+      const sideAngle = s.side < 0 ? Math.PI - 0.28 : 0.28;
+      const bob = Math.sin((s.baseT * 3 + this.turnSway) * Math.PI * 2) * 0.18;
+      const angle = sideAngle + s.side * bob;
+      const pos = this._tunnelPoint(t, angle);
+      const sc = pSc(HORIZON_Y + t * (NEAR_Y - HORIZON_Y));
       const panelW = Math.max(2, 18 * sc);
       const panelH = Math.max(4, 84 * sc);
-      const slant = s.side * Math.max(1, 12 * sc);
+      const tangent = angle + Math.PI / 2;
+      const nx = Math.cos(angle), ny = Math.sin(angle);
+      const tx = Math.cos(tangent), ty = Math.sin(tangent);
       const depth = 2.3 + t * 3.5;
 
       s.panel.clear();
       s.panel.fillStyle(0x1b2b3f, 0.76);
       s.panel.fillPoints([
-        { x: sx - s.side * panelW * 0.5, y: worldY - panelH * 0.52 },
-        { x: sx + s.side * panelW * 0.5, y: worldY - panelH * 0.36 },
-        { x: sx + s.side * (panelW * 0.5 + slant), y: worldY + panelH * 0.48 },
-        { x: sx - s.side * (panelW * 0.5 - slant), y: worldY + panelH * 0.36 },
+        { x: pos.x - tx * panelW * 0.5 - nx * panelH * 0.12, y: pos.y - ty * panelW * 0.5 - ny * panelH * 0.12 },
+        { x: pos.x + tx * panelW * 0.5 - nx * panelH * 0.12, y: pos.y + ty * panelW * 0.5 - ny * panelH * 0.12 },
+        { x: pos.x + tx * panelW * 0.38 + nx * panelH * 0.44, y: pos.y + ty * panelW * 0.38 + ny * panelH * 0.44 },
+        { x: pos.x - tx * panelW * 0.38 + nx * panelH * 0.44, y: pos.y - ty * panelW * 0.38 + ny * panelH * 0.44 },
       ], true);
       s.panel.lineStyle(Math.max(1, 2 * sc), 0x6ec6ff, 0.25 + t * 0.25);
       s.panel.strokePath();
       s.panel.setDepth(depth);
 
-      s.glow.setPosition(sx, worldY - panelH * 0.22).setRadius(Math.max(2, 18 * sc)).setAlpha(0.04 + t * 0.2).setDepth(depth + 0.1);
-      s.bulb.setPosition(sx, worldY - panelH * 0.22).setRadius(Math.max(1, 5 * sc)).setAlpha(0.2 + t * 0.55).setDepth(depth + 0.2);
+      const lightX = pos.x + nx * panelH * 0.1;
+      const lightY = pos.y + ny * panelH * 0.1;
+      s.glow.setPosition(lightX, lightY).setRadius(Math.max(2, 18 * sc)).setAlpha(0.04 + t * 0.2).setDepth(depth + 0.1);
+      s.bulb.setPosition(lightX, lightY).setRadius(Math.max(1, 5 * sc)).setAlpha(0.2 + t * 0.55).setDepth(depth + 0.2);
     }
   }
 
@@ -1093,6 +1151,7 @@ class GameScene extends Phaser.Scene {
     }
     if (this.slideTimer > 0) this.slideTimer = Math.max(0, this.slideTimer - delta);
     this._updateTrackCurve(delta);
+    this._updateTrackMarks(dt);
     this._redrawTrack();
 
     if (Phaser.Input.Keyboard.JustDown(this.cursors.up) || Phaser.Input.Keyboard.JustDown(this.wKey) || Phaser.Input.Keyboard.JustDown(this.spaceKey)) this._jump();
@@ -1129,7 +1188,6 @@ class GameScene extends Phaser.Scene {
       if (canCollide) this._handleCollision(obj);
     }
 
-    this._updateTrackMarks(dt);
     this._updateSideScenery(dt);
     if (this.rhythmMode) this._updateRhythmSpawner(delta);
     else if (this.runTime >= this.spawnCursor) this._spawnPattern();
