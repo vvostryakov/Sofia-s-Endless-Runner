@@ -34,6 +34,8 @@ const SLIDE_DURATION = 620;
 const MAGNET_DURATION = 7600;
 const DOUBLE_JUMP_INIT = 370;
 const SAFE_START_MS = 1300;
+const MAX_COIN_SPAWN_GAP_MS = 5200;
+const COIN_TRAIL_SPACING = 46;
 const STORAGE_KEYS = {
   bestScore: 'ser_best_score_v1',
   bestCoins: 'ser_best_coins_v1',
@@ -194,6 +196,7 @@ class GameScene extends Phaser.Scene {
     this.slideTimer = 0;
     this.jumpsUsed = 0;
     this.level = 1;
+    this.lastCoinSpawnAt = -MAX_COIN_SPAWN_GAP_MS;
 
     this.pLane = 1;
     this.pX = LANE_NX[1];
@@ -492,10 +495,15 @@ class GameScene extends Phaser.Scene {
 
   _spawnPattern() {
     const difficulty = this._difficulty();
-    if (this.runTime < SAFE_START_MS) return;
+    if (this.runTime < SAFE_START_MS) {
+      this._scheduleNextSpawn(SAFE_START_MS - this.runTime);
+      return;
+    }
 
+    const needsCoins = this.runTime - this.lastCoinSpawnAt >= MAX_COIN_SPAWN_GAP_MS;
     const roll = Math.random();
-    if (roll < 0.07 + difficulty * 0.02) this._spawnShield();
+    if (needsCoins) this._spawnCoinTrail(difficulty);
+    else if (roll < 0.07 + difficulty * 0.02) this._spawnShield();
     else if (roll < 0.13 + difficulty * 0.03) this._spawnMagnet();
     else if (roll < 0.31 + difficulty * 0.09) this._spawnWagon();
     else if (roll < 0.49 + difficulty * 0.08) this._spawnCoinTrail(difficulty);
@@ -544,6 +552,7 @@ class GameScene extends Phaser.Scene {
   }
 
   _spawnCoinTrail(difficulty = this._difficulty()) {
+    this.lastCoinSpawnAt = this.runTime;
     const lane = Phaser.Math.Between(0, 2);
     const laneDrift = Math.random() < 0.35 + difficulty * 0.25 ? Phaser.Utils.Array.GetRandom([-1, 1]) : 0;
     const count = Phaser.Math.Between(4, 7);
@@ -551,11 +560,12 @@ class GameScene extends Phaser.Scene {
       const trailLane = Phaser.Math.Clamp(lane + (i > count / 2 ? laneDrift : 0), 0, 2);
       const coin = this.add.circle(0, 0, 1, 0xffd700).setDepth(6);
       const shine = this.add.circle(0, 0, 1, 0xfff59d, 0.72).setDepth(7);
-      this.gameObjs.push({ type: 'coin', lane: trailLane, worldY: HORIZON_Y + 6 - i * 46, worldW: 28, worldH: 28, parts: [coin, shine], coin, shine, checked: false });
+      this.gameObjs.push({ type: 'coin', lane: trailLane, worldY: HORIZON_Y + 6 - i * COIN_TRAIL_SPACING, worldW: 28, worldH: 28, parts: [coin, shine], coin, shine, checked: false });
     }
   }
 
   _spawnWagon() {
+    this.lastCoinSpawnAt = this.runTime;
     const lane = Phaser.Math.Between(0, 2);
     const ww = 86, wh = 52;
     const body = this.add.rectangle(0, 0, 1, 1, 0x4e342e).setDepth(5);
