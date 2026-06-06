@@ -18,6 +18,10 @@ const eY  = (y, h) => y - h * pSc(y);
 const JUMP_INIT = 465;
 const GRAVITY   = 900;
 const WAGON_TOP = 72;
+const WAGON_LENGTH = 185;
+const WAGON_LANDING_GRACE = 26;
+const WAGON_RIDE_MIN_MS = 1150;
+const WAGON_RIDE_MAX_MS = 2200;
 const BASE_SPEED = 195;
 const MAX_SPEED = 560;
 const TOUCH_THRESHOLD = 22;
@@ -620,23 +624,25 @@ class GameScene extends Phaser.Scene {
 
   _spawnWagon() {
     const lane = Phaser.Math.Between(0, 2);
-    const ww = 86, wh = 52;
+    const ww = 96, wh = 54, wl = WAGON_LENGTH;
+    const deck = this.add.graphics().setDepth(5);
     const body = this.add.rectangle(0, 0, 1, 1, 0x4e342e).setDepth(5);
     const roof = this.add.rectangle(0, 0, 1, 1, 0x6d4c41).setDepth(5);
-    const wl = this.add.circle(0, 0, 1, 0x1a1a1a).setDepth(5);
-    const wr = this.add.circle(0, 0, 1, 0x1a1a1a).setDepth(5);
-    const numCoins = Phaser.Math.Between(3, 6);
+    const wheelL = this.add.circle(0, 0, 1, 0x1a1a1a).setDepth(5);
+    const wheelR = this.add.circle(0, 0, 1, 0x1a1a1a).setDepth(5);
+    const numCoins = Phaser.Math.Between(6, 9);
     const coins = [];
     for (let i = 0; i < numCoins; i++) {
       const t = numCoins > 1 ? i / (numCoins - 1) : 0.5;
       coins.push({
         obj: this.add.circle(0, 0, 1, 0xffd700).setDepth(6),
         shine: this.add.circle(0, 0, 1, 0xffe082).setAlpha(0.7).setDepth(6),
-        fracT: t - 0.5,
+        fracX: Phaser.Math.FloatBetween(-0.24, 0.24),
+        lengthT: t,
         collected: false,
       });
     }
-    this.gameObjs.push({ type: 'wagon', lane, worldY: HORIZON_Y + 6, worldW: ww, worldH: wh, parts: [body, roof, wl, wr, ...coins.flatMap(c => [c.obj, c.shine])], body, roof, wl, wr, coins, checked: false });
+    this.gameObjs.push({ type: 'wagon', lane, worldY: HORIZON_Y + 6, worldW: ww, worldH: wh, worldL: wl, parts: [deck, body, roof, wheelL, wheelR, ...coins.flatMap(c => [c.obj, c.shine])], deck, body, roof, wl: wheelL, wr: wheelR, coins, checked: false });
   }
 
   _renderObj(obj) {
@@ -690,24 +696,52 @@ class GameScene extends Phaser.Scene {
     }
 
     if (obj.type === 'wagon') {
+      const rearY = Math.max(HORIZON_Y + 4, y - obj.worldL);
+      const rearSc = pSc(rearY);
+      const rearX = lX(obj.lane, rearY);
       const sw = obj.worldW * sc;
       const sh = obj.worldH * sc;
+      const rearW = obj.worldW * rearSc * 0.56;
       const suf = eY(y, WAGON_TOP);
+      const rearTop = eY(rearY, WAGON_TOP);
+      const dpRear = 4 + pT(rearY) * 5;
+
+      obj.deck.clear();
+      obj.deck.fillStyle(0x795548, 1);
+      obj.deck.fillPoints([
+        { x: rearX - rearW / 2, y: rearTop },
+        { x: rearX + rearW / 2, y: rearTop },
+        { x: x + sw * 0.52, y: suf },
+        { x: x - sw * 0.52, y: suf },
+      ], true);
+      obj.deck.lineStyle(Math.max(1, 2 * sc), 0xa1887f, 0.8);
+      obj.deck.strokePoints([
+        { x: rearX - rearW / 2, y: rearTop },
+        { x: rearX + rearW / 2, y: rearTop },
+        { x: x + sw * 0.52, y: suf },
+        { x: x - sw * 0.52, y: suf },
+      ], true);
+      obj.deck.setDepth(dpRear);
+
       const bcy = suf + sh / 2;
       obj.body.setPosition(x, bcy).setSize(sw, sh).setDepth(dp);
       const rh = sh * 0.22;
-      obj.roof.setPosition(x, suf - rh / 2).setSize(sw * 1.06, rh).setDepth(dp);
+      obj.roof.setPosition(x, suf - rh / 2).setSize(sw * 1.08, rh).setDepth(dp + 0.1);
       const wr = Math.max(2, 10 * sc);
       const wy = suf + sh + wr;
       obj.wl.setPosition(x - sw * 0.33, wy).setRadius(wr).setDepth(dp);
       obj.wr.setPosition(x + sw * 0.33, wy).setRadius(wr).setDepth(dp);
       obj.coins.forEach(c => {
         if (c.collected) return;
-        const cr = Math.max(2, 9 * sc);
-        const cx = x + c.fracT * sw;
-        const cy = suf - cr - 4 * sc;
-        c.obj.setPosition(cx, cy).setRadius(cr).setDepth(dp + 1);
-        c.shine.setPosition(cx - cr * 0.3, cy - cr * 0.35).setRadius(Math.max(1, cr * 0.42)).setDepth(dp + 1);
+        const coinWorldY = Phaser.Math.Linear(rearY + obj.worldL * 0.14, y - obj.worldL * 0.18, c.lengthT);
+        const coinSc = pSc(coinWorldY);
+        const coinX = lX(obj.lane, coinWorldY) + c.fracX * obj.worldW * coinSc;
+        const coinTop = eY(coinWorldY, WAGON_TOP);
+        const cr = Math.max(2, 9 * coinSc);
+        const cy = coinTop - cr - 4 * coinSc;
+        const coinDepth = 5 + pT(coinWorldY) * 5;
+        c.obj.setPosition(coinX, cy).setRadius(cr).setDepth(coinDepth + 1);
+        c.shine.setPosition(coinX - cr * 0.3, cy - cr * 0.35).setRadius(Math.max(1, cr * 0.42)).setDepth(coinDepth + 2);
       });
     }
   }
@@ -764,7 +798,14 @@ class GameScene extends Phaser.Scene {
         obj.checked = true;
         this.jumpH = WAGON_TOP;
         this.jumpVel = 0;
-        this.rideTimer = 1100;
+        this.jumpsUsed = 0;
+        const distancePastFront = Math.max(0, obj.worldY - NEAR_Y);
+        const remainingLength = Math.max(0, obj.worldL - distancePastFront);
+        this.rideTimer = Phaser.Math.Clamp(
+          (remainingLength / Math.max(1, this.speed)) * 1000 + 420,
+          WAGON_RIDE_MIN_MS,
+          WAGON_RIDE_MAX_MS
+        );
         const collected = obj.coins.filter(c => !c.collected).length;
         obj.coins.forEach(c => {
           if (!c.collected) {
@@ -912,13 +953,17 @@ class GameScene extends Phaser.Scene {
     for (let i = this.gameObjs.length - 1; i >= 0; i--) {
       const obj = this.gameObjs[i];
       obj.worldY += this.speed * dt;
-      if (obj.consumed || obj.worldY > NEAR_Y + 80) {
+      const cleanupY = NEAR_Y + 80 + (obj.worldL || 0);
+      if (obj.consumed || obj.worldY > cleanupY) {
         obj.parts.forEach(p => p.destroy());
         this.gameObjs.splice(i, 1);
         continue;
       }
       this._renderObj(obj);
-      if (obj.worldY >= NEAR_Y - 18 && obj.worldY <= NEAR_Y + 18) this._handleCollision(obj);
+      const canCollide = obj.type === 'wagon'
+        ? obj.worldY >= NEAR_Y - WAGON_LANDING_GRACE && obj.worldY <= NEAR_Y + obj.worldL
+        : obj.worldY >= NEAR_Y - 18 && obj.worldY <= NEAR_Y + 18;
+      if (canCollide) this._handleCollision(obj);
     }
 
     this._updateTrackMarks(dt);
