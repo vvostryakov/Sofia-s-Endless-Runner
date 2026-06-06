@@ -196,7 +196,7 @@ class GameScene extends Phaser.Scene {
     this.slideTimer = 0;
     this.jumpsUsed = 0;
     this.level = 1;
-    this.lastCoinSpawnAt = -MAX_COIN_SPAWN_GAP_MS;
+    this.lastLooseCoinSpawnAt = -MAX_COIN_SPAWN_GAP_MS;
 
     this.pLane = 1;
     this.pX = LANE_NX[1];
@@ -496,13 +496,13 @@ class GameScene extends Phaser.Scene {
   _spawnPattern() {
     const difficulty = this._difficulty();
     if (this.runTime < SAFE_START_MS) {
-      this._scheduleNextSpawn(SAFE_START_MS - this.runTime);
+      this.spawnCursor = SAFE_START_MS;
       return;
     }
 
-    const needsCoins = this.runTime - this.lastCoinSpawnAt >= MAX_COIN_SPAWN_GAP_MS;
+    const needsLooseCoins = this.runTime - this.lastLooseCoinSpawnAt >= MAX_COIN_SPAWN_GAP_MS;
     const roll = Math.random();
-    if (needsCoins) this._spawnCoinTrail(difficulty);
+    if (needsLooseCoins) this._spawnCoinTrail(difficulty);
     else if (roll < 0.07 + difficulty * 0.02) this._spawnShield();
     else if (roll < 0.13 + difficulty * 0.03) this._spawnMagnet();
     else if (roll < 0.31 + difficulty * 0.09) this._spawnWagon();
@@ -552,7 +552,7 @@ class GameScene extends Phaser.Scene {
   }
 
   _spawnCoinTrail(difficulty = this._difficulty()) {
-    this.lastCoinSpawnAt = this.runTime;
+    this.lastLooseCoinSpawnAt = this.runTime;
     const lane = Phaser.Math.Between(0, 2);
     const laneDrift = Math.random() < 0.35 + difficulty * 0.25 ? Phaser.Utils.Array.GetRandom([-1, 1]) : 0;
     const count = Phaser.Math.Between(4, 7);
@@ -565,7 +565,6 @@ class GameScene extends Phaser.Scene {
   }
 
   _spawnWagon() {
-    this.lastCoinSpawnAt = this.runTime;
     const lane = Phaser.Math.Between(0, 2);
     const ww = 86, wh = 52;
     const body = this.add.rectangle(0, 0, 1, 1, 0x4e342e).setDepth(5);
