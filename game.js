@@ -245,7 +245,7 @@ class GameScene extends Phaser.Scene {
       const baseT = (i + 0.5) / 6;
       const worldY = HORIZON_Y + baseT * (NEAR_Y - HORIZON_Y);
       const sc     = pSc(worldY);
-      const inset  = TRACK_HW * 1.12;
+      const inset  = TRACK_NEAR_HW * 1.12;
 
       const mkPost = (side) => {
         const sx = VP_X + side * (VP_X + pT(worldY) * (inset - 0));
@@ -271,7 +271,7 @@ class GameScene extends Phaser.Scene {
       const t       = s.baseT;
       const worldY  = HORIZON_Y + t * (NEAR_Y - HORIZON_Y);
       const sc      = pSc(worldY);
-      const inset   = TRACK_HW + 18;
+      const inset   = TRACK_NEAR_HW + 18;
       const sx      = VP_X + s.side * pT(worldY) * inset;
       const postH   = Math.round(65 * sc);
 
