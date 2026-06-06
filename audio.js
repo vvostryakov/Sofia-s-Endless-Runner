@@ -7,6 +7,7 @@ class AudioManager {
     this._sfxGain = null;
     this._track = null;
     this._loopTimer = null;
+    this._muted = false;
   }
 
   _init() {
@@ -17,11 +18,11 @@ class AudioManager {
     this._ctx = new (window.AudioContext || window.webkitAudioContext)();
 
     this._musicGain = this._ctx.createGain();
-    this._musicGain.gain.value = 0.38;
+    this._musicGain.gain.value = this._muted ? 0 : 0.38;
     this._musicGain.connect(this._ctx.destination);
 
     this._sfxGain = this._ctx.createGain();
-    this._sfxGain.gain.value = 0.75;
+    this._sfxGain.gain.value = this._muted ? 0 : 0.75;
     this._sfxGain.connect(this._ctx.destination);
   }
 
@@ -141,6 +142,13 @@ class AudioManager {
   stop() {
     this._track = null;
     if (this._loopTimer) { clearTimeout(this._loopTimer); this._loopTimer = null; }
+  }
+
+  setMuted(muted) {
+    this._muted = muted;
+    if (!this._ctx) return;
+    this._musicGain.gain.value = muted ? 0 : 0.38;
+    this._sfxGain.gain.value = muted ? 0 : 0.75;
   }
 
   // ── SFX ───────────────────────────────────────────────────────────────────
