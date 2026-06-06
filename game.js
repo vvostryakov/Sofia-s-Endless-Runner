@@ -10,13 +10,8 @@ const NEAR_Y        = 635;
 const TRACK_FAR_HW  = 120;
 const TRACK_NEAR_HW = 185;
 
-const LANE_FAR_X  = [-1, 0, 1].map(s => Math.round(VP_X + s * TRACK_FAR_HW  * 0.667));
-const LANE_NEAR_X = [-1, 0, 1].map(s => Math.round(VP_X + s * TRACK_NEAR_HW * 0.667));
-const LANE_NX     = LANE_NEAR_X;
-
 const pT  = y      => Math.max(0, (y - HORIZON_Y) / (NEAR_Y - HORIZON_Y));
 const pSc = y      => 0.12 + pT(y) * 0.88;
-const lX  = (l, y) => LANE_FAR_X[l] + pT(y) * (LANE_NEAR_X[l] - LANE_FAR_X[l]);
 const eY  = (y, h) => y - h * pSc(y);
 
 // ─── MVP tuning ───────────────────────────────────────────────────────────────
@@ -34,6 +29,11 @@ const SLIDE_DURATION = 620;
 const MAGNET_DURATION = 7600;
 const DOUBLE_JUMP_INIT = 370;
 const SAFE_START_MS = 1300;
+const TURN_MAX_OFFSET = 54;
+const TURN_NEAR_FACTOR = 0.18;
+const TURN_CHANGE_MIN_MS = 2400;
+const TURN_CHANGE_MAX_MS = 4300;
+const LANE_SIDE = [-1, 0, 1];
 const STORAGE_KEYS = {
   bestScore: 'ser_best_score_v1',
   bestCoins: 'ser_best_coins_v1',
@@ -194,9 +194,13 @@ class GameScene extends Phaser.Scene {
     this.slideTimer = 0;
     this.jumpsUsed = 0;
     this.level = 1;
+    this.trackTurn = 0;
+    this.targetTrackTurn = 0;
+    this.nextTurnAt = TURN_CHANGE_MIN_MS;
+    this.turnSway = 0;
 
     this.pLane = 1;
-    this.pX = LANE_NX[1];
+    this.pX = this._laneX(1, NEAR_Y);
     this.jumpH = 0;
     this.jumpVel = 0;
     this.rideTimer = 0;
@@ -252,30 +256,89 @@ class GameScene extends Phaser.Scene {
       .setDepth(1);
   }
 
-  _buildTrack() {
-    const g = this.add.graphics().setDepth(2);
-    const lx = VP_X - TRACK_FAR_HW,  rx = VP_X + TRACK_FAR_HW;
-    const ln = VP_X - TRACK_NEAR_HW, rn = VP_X + TRACK_NEAR_HW;
+  _trackHalfWidth(t) {
+    return TRACK_FAR_HW + t * (TRACK_NEAR_HW - TRACK_FAR_HW);
+  }
 
-    const hg = this.add.graphics().setDepth(1);
+  _curveOffset(y) {
+    const t = pT(y);
+    const horizonWeight = 1 - t * (1 - TURN_NEAR_FACTOR);
+    return this.trackTurn * horizonWeight + Math.sin((t + this.turnSway) * Math.PI) * this.trackTurn * 0.1 * (1 - t);
+  }
+
+  _curveCenterX(y) {
+    return VP_X + this._curveOffset(y);
+  }
+
+  _laneX(lane, y) {
+    const t = pT(y);
+    return this._curveCenterX(y) + LANE_SIDE[lane] * this._trackHalfWidth(t) * 0.667;
+  }
+
+  _updateTrackCurve(delta) {
+    if (this.runTime >= this.nextTurnAt) {
+      const options = [-1, -0.55, 0, 0.55, 1].filter(v => Math.sign(v) !== Math.sign(this.targetTrackTurn));
+      this.targetTrackTurn = Phaser.Utils.Array.GetRandom(options) * TURN_MAX_OFFSET;
+      this.nextTurnAt = this.runTime + Phaser.Math.Between(TURN_CHANGE_MIN_MS, TURN_CHANGE_MAX_MS);
+    }
+    const dt = delta / 1000;
+    this.trackTurn += (this.targetTrackTurn - this.trackTurn) * Math.min(1, dt * 0.9);
+    this.turnSway = (this.turnSway + dt * 0.08) % 1;
+  }
+
+  _buildTrack() {
+    this.horizonG = this.add.graphics().setDepth(1);
+    this.trackG = this.add.graphics().setDepth(2);
+    this._redrawTrack();
+  }
+
+  _redrawTrack() {
+    const g = this.trackG;
+    const hg = this.horizonG;
+    g.clear();
+    hg.clear();
+
     hg.fillGradientStyle(0x1a3a5c, 0x1a3a5c, 0x0d1f36, 0x0d1f36, 1);
     hg.fillRect(0, HORIZON_Y - 18, W, 36);
 
-    g.fillStyle(0x252b3a, 1);
-    g.fillPoints([{ x: lx, y: HORIZON_Y }, { x: rx, y: HORIZON_Y }, { x: rn, y: NEAR_Y }, { x: ln, y: NEAR_Y }], true);
-    g.lineStyle(3, 0x607d8b, 0.85);
-    g.beginPath(); g.moveTo(lx, HORIZON_Y); g.lineTo(ln, NEAR_Y); g.strokePath();
-    g.beginPath(); g.moveTo(rx, HORIZON_Y); g.lineTo(rn, NEAR_Y); g.strokePath();
-    g.lineStyle(2, 0x90a4ae, 0.9);
-    g.beginPath(); g.moveTo(lx, HORIZON_Y); g.lineTo(rx, HORIZON_Y); g.strokePath();
+    const left = [];
+    const right = [];
+    const segments = 14;
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const y = HORIZON_Y + t * (NEAR_Y - HORIZON_Y);
+      const cx = this._curveCenterX(y);
+      const hw = this._trackHalfWidth(t);
+      left.push({ x: cx - hw, y });
+      right.push({ x: cx + hw, y });
+    }
 
-    const dfl = VP_X - TRACK_FAR_HW * 0.315, dfr = VP_X + TRACK_FAR_HW * 0.315;
-    const dnl = VP_X - TRACK_NEAR_HW * 0.315, dnr = VP_X + TRACK_NEAR_HW * 0.315;
-    g.lineStyle(2, 0x455a64, 0.55);
-    g.beginPath(); g.moveTo(dfl, HORIZON_Y); g.lineTo(dnl, NEAR_Y); g.strokePath();
-    g.beginPath(); g.moveTo(dfr, HORIZON_Y); g.lineTo(dnr, NEAR_Y); g.strokePath();
+    g.fillStyle(0x252b3a, 1);
+    g.fillPoints([...left, ...right.slice().reverse()], true);
+
+    const strokeLine = (points, width, color, alpha) => {
+      g.lineStyle(width, color, alpha);
+      g.beginPath();
+      g.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) g.lineTo(points[i].x, points[i].y);
+      g.strokePath();
+    };
+
+    strokeLine(left, 3, 0x607d8b, 0.85);
+    strokeLine(right, 3, 0x607d8b, 0.85);
+    strokeLine(left.map((pt, i) => ({ x: pt.x + this._trackHalfWidth(i / segments) * 0.685, y: pt.y })), 2, 0x455a64, 0.55);
+    strokeLine(right.map((pt, i) => ({ x: pt.x - this._trackHalfWidth(i / segments) * 0.685, y: pt.y })), 2, 0x455a64, 0.55);
+
+    g.lineStyle(2, 0x90a4ae, 0.9);
+    g.beginPath();
+    g.moveTo(left[0].x, HORIZON_Y);
+    g.lineTo(right[0].x, HORIZON_Y);
+    g.strokePath();
     g.lineStyle(3, 0x607d8b, 0.75);
-    g.beginPath(); g.moveTo(ln, NEAR_Y); g.lineTo(rn, NEAR_Y); g.strokePath();
+    g.beginPath();
+    g.moveTo(left[left.length - 1].x, NEAR_Y);
+    g.lineTo(right[right.length - 1].x, NEAR_Y);
+    g.strokePath();
   }
 
   _buildTrackMarks() {
@@ -287,11 +350,11 @@ class GameScene extends Phaser.Scene {
     for (const m of this.marks) {
       const t = (m.baseT + this.markOffset) % 1;
       const y = HORIZON_Y + t * (NEAR_Y - HORIZON_Y);
-      const hw = TRACK_FAR_HW + t * (TRACK_NEAR_HW - TRACK_FAR_HW);
+      const hw = this._trackHalfWidth(t);
       const lh = Math.max(1, t * 2.5);
       m.gfx.clear();
       m.gfx.fillStyle(0x546e7a, t * 0.22);
-      m.gfx.fillRect(VP_X - hw, y - lh, hw * 2, lh);
+      m.gfx.fillRect(this._curveCenterX(y) - hw, y - lh, hw * 2, lh);
     }
   }
 
@@ -301,8 +364,8 @@ class GameScene extends Phaser.Scene {
       const worldY = HORIZON_Y + baseT * (NEAR_Y - HORIZON_Y);
       const sc = pSc(worldY);
       const mkPost = (side) => {
-        const trackHW = TRACK_FAR_HW + pT(worldY) * (TRACK_NEAR_HW - TRACK_FAR_HW);
-        const sx = VP_X + side * (trackHW + 22 * sc);
+        const trackHW = this._trackHalfWidth(pT(worldY));
+        const sx = this._curveCenterX(worldY) + side * (trackHW + 22 * sc);
         const postH = Math.round(65 * sc);
         const post = this.add.rectangle(sx, worldY - postH / 2, Math.round(5 * sc), postH, 0x607d8b).setDepth(3);
         const bulb = this.add.circle(sx, worldY - postH - Math.round(6 * sc), Math.round(7 * sc), 0xffee58).setAlpha(0.6).setDepth(3);
@@ -319,8 +382,8 @@ class GameScene extends Phaser.Scene {
       const t = s.baseT;
       const worldY = HORIZON_Y + t * (NEAR_Y - HORIZON_Y);
       const sc = pSc(worldY);
-      const trackHW = TRACK_FAR_HW + t * (TRACK_NEAR_HW - TRACK_FAR_HW);
-      const sx = VP_X + s.side * (trackHW + 22 * sc);
+      const trackHW = this._trackHalfWidth(t);
+      const sx = this._curveCenterX(worldY) + s.side * (trackHW + 22 * sc);
       const postH = Math.round(65 * sc);
       s.post.setPosition(sx, worldY - postH / 2).setSize(Math.max(1, Math.round(5 * sc)), Math.max(1, postH)).setDepth(2 + t * 2);
       s.bulb.setPosition(sx, worldY - postH - Math.round(6 * sc)).setRadius(Math.max(1, Math.round(7 * sc))).setAlpha(t * 0.6).setDepth(2 + t * 2);
@@ -329,7 +392,7 @@ class GameScene extends Phaser.Scene {
 
   _buildPlayer() {
     const d = 10;
-    this.shadow = this.add.ellipse(LANE_NX[1], NEAR_Y + 4, 48, 16, 0x000000).setAlpha(0.5).setDepth(d - 1);
+    this.shadow = this.add.ellipse(this._laneX(1, NEAR_Y), NEAR_Y + 4, 48, 16, 0x000000).setAlpha(0.5).setDepth(d - 1);
     this.vis = {
       legL: this.add.rectangle(0, 0, 13, 22, 0x1565c0).setDepth(d),
       legR: this.add.rectangle(0, 0, 13, 22, 0x1565c0).setDepth(d),
@@ -579,7 +642,7 @@ class GameScene extends Phaser.Scene {
   _renderObj(obj) {
     const y = obj.worldY;
     const sc = pSc(y);
-    const x = lX(obj.lane, y);
+    const x = this._laneX(obj.lane, y);
     const dp = 4 + pT(y) * 5;
 
     if (obj.type === 'obstacle') {
@@ -825,13 +888,15 @@ class GameScene extends Phaser.Scene {
       this._updatePowerUI();
     }
     if (this.slideTimer > 0) this.slideTimer = Math.max(0, this.slideTimer - delta);
+    this._updateTrackCurve(delta);
+    this._redrawTrack();
 
     if (Phaser.Input.Keyboard.JustDown(this.cursors.up) || Phaser.Input.Keyboard.JustDown(this.wKey) || Phaser.Input.Keyboard.JustDown(this.spaceKey)) this._jump();
     if (Phaser.Input.Keyboard.JustDown(this.cursors.down) || Phaser.Input.Keyboard.JustDown(this.sKey)) this._slide();
     if (Phaser.Input.Keyboard.JustDown(this.cursors.left) || Phaser.Input.Keyboard.JustDown(this.aKey)) this._switchLane(-1);
     if (Phaser.Input.Keyboard.JustDown(this.cursors.right) || Phaser.Input.Keyboard.JustDown(this.dKey)) this._switchLane(1);
 
-    this.pX += (LANE_NX[this.pLane] - this.pX) * 11 * dt;
+    this.pX += (this._laneX(this.pLane, NEAR_Y) - this.pX) * 11 * dt;
 
     if (this.rideTimer > 0) {
       this.rideTimer -= delta;
