@@ -11,7 +11,8 @@ const TRACK_FAR_HW  = 120;
 const TRACK_NEAR_HW = 185;
 
 const pT  = y      => Math.max(0, (y - HORIZON_Y) / (NEAR_Y - HORIZON_Y));
-const pSc = y      => 0.12 + pT(y) * 0.88;
+const pEase = y    => Math.pow(pT(y), 1.35);
+const pSc = y      => 0.1 + pEase(y) * 0.9;
 const eY  = (y, h) => y - h * pSc(y);
 
 // ─── MVP tuning ───────────────────────────────────────────────────────────────
@@ -22,8 +23,9 @@ const WAGON_LENGTH = 185;
 const WAGON_LANDING_GRACE = 26;
 const WAGON_RIDE_MIN_MS = 1150;
 const WAGON_RIDE_MAX_MS = 2200;
-const BASE_SPEED = 195;
-const MAX_SPEED = 560;
+const APPROACH_START_Y = HORIZON_Y + 10;
+const BASE_SPEED = 145;
+const MAX_SPEED = 430;
 const TOUCH_THRESHOLD = 22;
 const SCORE_PER_SECOND = 15;
 const COIN_SCORE = 20;
@@ -552,8 +554,8 @@ class GameScene extends Phaser.Scene {
 
   _scheduleNextSpawn(extra = 0) {
     const difficulty = this._difficulty();
-    const minGap = Phaser.Math.Linear(1480, 860, difficulty);
-    const maxGap = Phaser.Math.Linear(2400, 1450, difficulty);
+    const minGap = Phaser.Math.Linear(1780, 1100, difficulty);
+    const maxGap = Phaser.Math.Linear(2850, 1780, difficulty);
     this.spawnCursor = this.runTime + Phaser.Math.Between(Math.round(minGap), Math.round(maxGap)) + extra;
   }
 
@@ -580,7 +582,7 @@ class GameScene extends Phaser.Scene {
         const glow = this.add.rectangle(0, 0, 1, 1, 0xff8a80, 0.55).setDepth(6);
         const postL = this.add.rectangle(0, 0, 1, 1, 0x5d4037).setDepth(5);
         const postR = this.add.rectangle(0, 0, 1, 1, 0x5d4037).setDepth(5);
-        this.gameObjs.push({ type: 'gate', lane, worldY: HORIZON_Y + 6, worldH: 86, worldW: 74, parts: [beam, glow, postL, postR], beam, glow, postL, postR, checked: false });
+        this.gameObjs.push({ type: 'gate', lane, worldY: APPROACH_START_Y, worldH: 86, worldW: 74, parts: [beam, glow, postL, postR], beam, glow, postL, postR, checked: false });
       } else {
         const h = Phaser.Math.Between(42, 68);
         const w = Phaser.Math.Between(30, 48);
@@ -588,7 +590,7 @@ class GameScene extends Phaser.Scene {
         const face = this.add.rectangle(0, 0, 1, 1, color).setDepth(5);
         const top = this.add.rectangle(0, 0, 1, 1, Phaser.Display.Color.IntegerToColor(color).lighten(25).color32).setDepth(5);
         const side = this.add.rectangle(0, 0, 1, 1, Phaser.Display.Color.IntegerToColor(color).darken(20).color32).setDepth(5);
-        this.gameObjs.push({ type: 'obstacle', lane, worldY: HORIZON_Y + 6, worldH: h, worldW: w, parts: [face, top, side], face, top, side, checked: false });
+        this.gameObjs.push({ type: 'obstacle', lane, worldY: APPROACH_START_Y, worldH: h, worldW: w, parts: [face, top, side], face, top, side, checked: false });
       }
     }
   }
@@ -598,7 +600,7 @@ class GameScene extends Phaser.Scene {
     const ring = this.add.circle(0, 0, 1, 0x4fc3f7, 0.18).setStrokeStyle(2, 0xb3e5fc, 0.95).setDepth(6);
     const core = this.add.circle(0, 0, 1, 0x81d4fa, 0.9).setDepth(6);
     const glint = this.add.circle(0, 0, 1, 0xffffff, 0.75).setDepth(7);
-    this.gameObjs.push({ type: 'shield', lane, worldY: HORIZON_Y + 6, worldW: 44, worldH: 44, parts: [ring, core, glint], ring, core, glint, checked: false });
+    this.gameObjs.push({ type: 'shield', lane, worldY: APPROACH_START_Y, worldW: 44, worldH: 44, parts: [ring, core, glint], ring, core, glint, checked: false });
   }
 
 
@@ -607,7 +609,7 @@ class GameScene extends Phaser.Scene {
     const ring = this.add.circle(0, 0, 1, 0x8e24aa, 0.2).setStrokeStyle(2, 0xf3e5f5, 0.95).setDepth(6);
     const core = this.add.rectangle(0, 0, 1, 1, 0xba68c8).setDepth(7);
     const spark = this.add.circle(0, 0, 1, 0xffffff, 0.82).setDepth(8);
-    this.gameObjs.push({ type: 'magnet', lane, worldY: HORIZON_Y + 6, worldW: 44, worldH: 44, parts: [ring, core, spark], ring, core, spark, checked: false });
+    this.gameObjs.push({ type: 'magnet', lane, worldY: APPROACH_START_Y, worldW: 44, worldH: 44, parts: [ring, core, spark], ring, core, spark, checked: false });
   }
 
   _spawnCoinTrail(difficulty = this._difficulty()) {
@@ -618,7 +620,7 @@ class GameScene extends Phaser.Scene {
       const trailLane = Phaser.Math.Clamp(lane + (i > count / 2 ? laneDrift : 0), 0, 2);
       const coin = this.add.circle(0, 0, 1, 0xffd700).setDepth(6);
       const shine = this.add.circle(0, 0, 1, 0xfff59d, 0.72).setDepth(7);
-      this.gameObjs.push({ type: 'coin', lane: trailLane, worldY: HORIZON_Y + 6 - i * 46, worldW: 28, worldH: 28, parts: [coin, shine], coin, shine, checked: false });
+      this.gameObjs.push({ type: 'coin', lane: trailLane, worldY: APPROACH_START_Y - i * 46, worldW: 28, worldH: 28, parts: [coin, shine], coin, shine, checked: false });
     }
   }
 
@@ -642,11 +644,15 @@ class GameScene extends Phaser.Scene {
         collected: false,
       });
     }
-    this.gameObjs.push({ type: 'wagon', lane, worldY: HORIZON_Y + 6, worldW: ww, worldH: wh, worldL: wl, parts: [deck, body, roof, wheelL, wheelR, ...coins.flatMap(c => [c.obj, c.shine])], deck, body, roof, wl: wheelL, wr: wheelR, coins, checked: false });
+    this.gameObjs.push({ type: 'wagon', lane, worldY: APPROACH_START_Y, worldW: ww, worldH: wh, worldL: wl, parts: [deck, body, roof, wheelL, wheelR, ...coins.flatMap(c => [c.obj, c.shine])], deck, body, roof, wl: wheelL, wr: wheelR, coins, checked: false });
   }
 
   _renderObj(obj) {
     const y = obj.worldY;
+    const visible = y >= HORIZON_Y;
+    obj.parts.forEach(part => part.setVisible(visible));
+    if (!visible) return;
+
     const sc = pSc(y);
     const x = this._laneX(obj.lane, y);
     const dp = 4 + pT(y) * 5;
@@ -698,7 +704,7 @@ class GameScene extends Phaser.Scene {
     if (obj.type === 'wagon') {
       const rearY = Math.max(HORIZON_Y + 4, y - obj.worldL);
       const rearSc = pSc(rearY);
-      const rearX = lX(obj.lane, rearY);
+      const rearX = this._laneX(obj.lane, rearY);
       const sw = obj.worldW * sc;
       const sh = obj.worldH * sc;
       const rearW = obj.worldW * rearSc * 0.56;
@@ -734,8 +740,13 @@ class GameScene extends Phaser.Scene {
       obj.coins.forEach(c => {
         if (c.collected) return;
         const coinWorldY = Phaser.Math.Linear(rearY + obj.worldL * 0.14, y - obj.worldL * 0.18, c.lengthT);
+        const coinVisible = coinWorldY >= HORIZON_Y;
+        c.obj.setVisible(coinVisible);
+        c.shine.setVisible(coinVisible);
+        if (!coinVisible) return;
+
         const coinSc = pSc(coinWorldY);
-        const coinX = lX(obj.lane, coinWorldY) + c.fracX * obj.worldW * coinSc;
+        const coinX = this._laneX(obj.lane, coinWorldY) + c.fracX * obj.worldW * coinSc;
         const coinTop = eY(coinWorldY, WAGON_TOP);
         const cr = Math.max(2, 9 * coinSc);
         const cy = coinTop - cr - 4 * coinSc;
@@ -919,7 +930,7 @@ class GameScene extends Phaser.Scene {
     const dt = delta / 1000;
     this.runTime += delta;
     this.distance += this.speed * dt;
-    this.speed = Math.min(MAX_SPEED, BASE_SPEED + this.runTime * 0.0027 + this.distance * 0.015);
+    this.speed = Math.min(MAX_SPEED, BASE_SPEED + this.runTime * 0.0017 + this.distance * 0.01);
     this.level = 1 + Math.floor(this.distance / 950);
     this.score += SCORE_PER_SECOND * dt * (1 + Math.min(0.5, (this.combo - 1) * 0.08));
     this.scoreTxt.setText('Score: ' + Math.floor(this.score));
