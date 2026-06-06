@@ -7,8 +7,9 @@ const W = 400, H = 700;
 const VP_X          = 200;
 const HORIZON_Y     = 154;
 const NEAR_Y        = 646;
-const TRACK_FAR_HW  = 14;
-const TRACK_NEAR_HW = 232;
+const ROAD_END_Y    = H + 92;
+const TRACK_FAR_HW  = 8;
+const TRACK_NEAR_HW = 274;
 
 const pT  = y      => Phaser.Math.Clamp((y - HORIZON_Y) / (NEAR_Y - HORIZON_Y), 0, 1);
 const pEase = y    => Math.pow(pT(y), 1.72);
@@ -277,10 +278,10 @@ class GameScene extends Phaser.Scene {
 
     const tunnel = this.add.graphics().setDepth(1.5);
     tunnel.fillGradientStyle(0x121827, 0x121827, 0x070a10, 0x070a10, 1);
-    tunnel.fillRect(0, HORIZON_Y - 18, W, NEAR_Y - HORIZON_Y + 90);
-    tunnel.fillStyle(0x020409, 0.5);
-    tunnel.fillTriangle(0, NEAR_Y + 64, VP_X - 10, HORIZON_Y - 8, 0, HORIZON_Y + 110);
-    tunnel.fillTriangle(W, NEAR_Y + 64, VP_X + 10, HORIZON_Y - 8, W, HORIZON_Y + 110);
+    tunnel.fillRect(0, HORIZON_Y - 18, W, ROAD_END_Y - HORIZON_Y + 28);
+    tunnel.fillStyle(0x020409, 0.34);
+    tunnel.fillTriangle(0, ROAD_END_Y + 20, VP_X - 10, HORIZON_Y - 8, 0, HORIZON_Y + 110);
+    tunnel.fillTriangle(W, ROAD_END_Y + 20, VP_X + 10, HORIZON_Y - 8, W, HORIZON_Y + 110);
   }
 
   _trackHalfWidth(t) {
@@ -407,16 +408,16 @@ class GameScene extends Phaser.Scene {
   }
 
   _buildTrackMarks() {
-    for (let i = 0; i < 9; i++) this.marks.push({ baseT: (i + 0.5) / 9, gfx: this.add.graphics().setDepth(3) });
+    for (let i = 0; i < 11; i++) this.marks.push({ baseT: (i + 0.5) / 11, gfx: this.add.graphics().setDepth(3) });
   }
 
   _updateTrackMarks(dt) {
     this.markOffset = (this.markOffset + this.speed * dt / (ROAD_END_Y - HORIZON_Y)) % 1;
     for (const m of this.marks) {
       const t = (m.baseT + this.markOffset) % 1;
-      const y = HORIZON_Y + t * (NEAR_Y - HORIZON_Y);
-      const y2 = Math.min(NEAR_Y, y + Phaser.Math.Linear(2, 16, Math.pow(t, 1.35)));
-      const hw = this._trackHalfWidth(t);
+      const y = HORIZON_Y + t * (ROAD_END_Y - HORIZON_Y);
+      const y2 = Math.min(ROAD_END_Y, y + Phaser.Math.Linear(2, 24, Math.pow(t, 1.35)));
+      const hw = this._trackHalfWidth(pT(y));
       const hw2 = this._trackHalfWidth(pT(y2));
       const cx = this._curveCenterX(y);
       const cx2 = this._curveCenterX(y2);
@@ -479,15 +480,16 @@ class GameScene extends Phaser.Scene {
     const d = 10;
     this.shadow = this.add.ellipse(this._laneX(1, NEAR_Y), NEAR_Y + 4, 48, 16, 0x000000).setAlpha(0.5).setDepth(d - 1);
     this.vis = {
-      legL: this.add.rectangle(0, 0, 13, 22, 0x1565c0).setDepth(d),
-      legR: this.add.rectangle(0, 0, 13, 22, 0x1565c0).setDepth(d),
-      body: this.add.rectangle(0, 0, 32, 34, 0xe91e8c).setDepth(d),
-      armL: this.add.rectangle(0, 0, 11, 24, 0xffb3ba).setDepth(d),
-      armR: this.add.rectangle(0, 0, 11, 24, 0xffb3ba).setDepth(d),
-      head: this.add.circle(0, 0, 15, 0xffcc99).setDepth(d),
-      hair: this.add.rectangle(0, 0, 33, 10, 0x5d4037).setDepth(d),
-      eyeL: this.add.circle(0, 0, 3, 0x1a1a2e).setDepth(d),
-      eyeR: this.add.circle(0, 0, 3, 0x1a1a2e).setDepth(d),
+      armL: this.add.rectangle(0, 0, 10, 25, 0xffb3ba).setDepth(d - 0.2),
+      armR: this.add.rectangle(0, 0, 10, 25, 0xffb3ba).setDepth(d - 0.2),
+      legL: this.add.rectangle(0, 0, 13, 25, 0x1565c0).setDepth(d),
+      legR: this.add.rectangle(0, 0, 13, 25, 0x1565c0).setDepth(d),
+      body: this.add.rectangle(0, 0, 34, 36, 0xe91e8c).setDepth(d + 0.1),
+      backStripe: this.add.rectangle(0, 0, 5, 28, 0xff9bd0).setDepth(d + 0.2),
+      head: this.add.circle(0, 0, 15, 0xffcc99).setDepth(d + 0.15),
+      hair: this.add.rectangle(0, 0, 35, 16, 0x5d4037).setDepth(d + 0.3),
+      ponytail: this.add.ellipse(0, 0, 16, 24, 0x4e342e).setDepth(d + 0.25),
+      bow: this.add.triangle(0, 0, -8, -5, -8, 5, 8, 0, 0xffd54f).setDepth(d + 0.4),
       shield: this.add.ellipse(0, 0, 68, 88, 0x4fc3f7, 0.16).setStrokeStyle(3, 0x81d4fa, 0.92).setDepth(d + 1).setVisible(false),
       magnet: this.add.circle(0, 0, 42, 0xba68c8, 0.12).setStrokeStyle(3, 0xf3e5f5, 0.8).setDepth(d + 1).setVisible(false),
     };
@@ -505,15 +507,16 @@ class GameScene extends Phaser.Scene {
     this.vis.shield.setPosition(x, sy + 2).setScale(shieldScale).setVisible(this.shieldCharges > 0);
     this.vis.magnet.setPosition(x, sy + 2).setScale(1 + Math.sin(t / 110) * 0.08).setVisible(this.magnetTimer > 0);
     this.shadow.setPosition(x, NEAR_Y + 4).setScale(sFrac, sFrac * 0.45).setAlpha(sFrac * 0.5);
-    this.vis.legL.setPosition(x - (sliding ? 17 : 9), sy + (sliding ? 28 : 31)).setScale(sliding ? 1.55 : 1, sliding ? 0.52 : 1 + swing * 0.45).setRotation(sliding ? 0.35 : 0);
-    this.vis.legR.setPosition(x + (sliding ? 15 : 9), sy + (sliding ? 31 : 31)).setScale(sliding ? 1.55 : 1, sliding ? 0.52 : 1 - swing * 0.45).setRotation(sliding ? 0.35 : 0);
-    this.vis.body.setPosition(x, sy + (sliding ? 17 : 6)).setScale(1, sliding ? 0.62 : 1).setRotation(sliding ? Math.PI / 2 : tilt);
-    this.vis.armL.setPosition(x - (sliding ? 18 : 24), sy + (sliding ? 19 : 4)).setRotation(sliding ? 1.15 : swing * 0.5);
-    this.vis.armR.setPosition(x + (sliding ? 18 : 24), sy + (sliding ? 19 : 4)).setRotation(sliding ? 1.15 : -swing * 0.5);
+    this.vis.legL.setPosition(x - (sliding ? 17 : 9), sy + (sliding ? 28 : 33)).setScale(sliding ? 1.55 : 1, sliding ? 0.52 : 1 + swing * 0.45).setRotation(sliding ? 0.35 : 0);
+    this.vis.legR.setPosition(x + (sliding ? 15 : 9), sy + (sliding ? 31 : 33)).setScale(sliding ? 1.55 : 1, sliding ? 0.52 : 1 - swing * 0.45).setRotation(sliding ? 0.35 : 0);
+    this.vis.body.setPosition(x, sy + (sliding ? 17 : 7)).setScale(1, sliding ? 0.62 : 1).setRotation(sliding ? Math.PI / 2 : tilt);
+    this.vis.backStripe.setPosition(x, sy + (sliding ? 17 : 7)).setScale(1, sliding ? 0.62 : 1).setRotation(sliding ? Math.PI / 2 : tilt);
+    this.vis.armL.setPosition(x - (sliding ? 18 : 23), sy + (sliding ? 19 : 7)).setRotation(sliding ? 1.15 : swing * 0.5);
+    this.vis.armR.setPosition(x + (sliding ? 18 : 23), sy + (sliding ? 19 : 7)).setRotation(sliding ? 1.15 : -swing * 0.5);
     this.vis.head.setPosition(x + (sliding ? 31 : 0), sy + (sliding ? 11 : -22)).setRotation(sliding ? Math.PI / 2 : tilt);
-    this.vis.hair.setPosition(x + (sliding ? 38 : 0), sy + (sliding ? 10 : -32)).setRotation(sliding ? Math.PI / 2 : tilt);
-    this.vis.eyeL.setPosition(x + (sliding ? 31 : -6), sy + (sliding ? 5 : -26));
-    this.vis.eyeR.setPosition(x + (sliding ? 31 : 6), sy + (sliding ? 17 : -26));
+    this.vis.hair.setPosition(x + (sliding ? 38 : 0), sy + (sliding ? 10 : -29)).setRotation(sliding ? Math.PI / 2 : tilt);
+    this.vis.ponytail.setPosition(x + (sliding ? 24 : 0), sy + (sliding ? 22 : -17)).setRotation(sliding ? Math.PI / 2 : tilt);
+    this.vis.bow.setPosition(x + (sliding ? 19 : 0), sy + (sliding ? 23 : -18)).setRotation(sliding ? Math.PI / 2 : tilt);
   }
 
   _buildUI() {
