@@ -4,22 +4,23 @@
 const W = 400, H = 700;
 
 // ─── Perspective ──────────────────────────────────────────────────────────────
-const VP_X  = 200;   // vanishing-point x (centre)
-const VP_Y  = 170;   // vanishing-point y (top of track)
-const NEAR_Y = 590;  // ground y at player level (bottom)
-const TRACK_HW = 150; // track half-width at NEAR_Y
+const VP_X         = 200;   // centre x
+const HORIZON_Y    = 172;   // y of the horizon LINE (not a point)
+const NEAR_Y       = 592;   // ground y at player level
+const TRACK_FAR_HW  = 42;   // track half-width AT the horizon (gives it real width)
+const TRACK_NEAR_HW = 150;  // track half-width at player level
 
-// Lane centre x values at NEAR_Y (left / centre / right)
-const LANE_NX = [
-  VP_X - Math.round(TRACK_HW * 0.63),  // ≈ 106
-  VP_X,                                  // 200
-  VP_X + Math.round(TRACK_HW * 0.63),  // ≈ 294
-];
+// Lane centre x at horizon and at player — lerped for any depth
+const LANE_FAR_X  = [-0.63, 0, 0.63].map(f => Math.round(VP_X + f * TRACK_FAR_HW));
+const LANE_NEAR_X = [-0.63, 0, 0.63].map(f => Math.round(VP_X + f * TRACK_NEAR_HW));
+// keep LANE_NX alias so existing player-position references still work
+const LANE_NX = LANE_NEAR_X;
 
 // Perspective helpers
-const pT  = y       => Math.max(0, (y - VP_Y) / (NEAR_Y - VP_Y));
+const pT  = y       => Math.max(0, (y - HORIZON_Y) / (NEAR_Y - HORIZON_Y));
 const pSc = y       => 0.06 + pT(y) * 0.94;
-const lX  = (l, y)  => VP_X + pT(y) * (LANE_NX[l] - VP_X);
+// lX lerps from the horizon spread to the near spread — NO single vanishing point
+const lX  = (l, y)  => LANE_FAR_X[l] + pT(y) * (LANE_NEAR_X[l] - LANE_FAR_X[l]);
 const eY  = (y, h)  => y - h * pSc(y);  // screen-y when elevated by h world-units
 
 // ─── Jump physics ─────────────────────────────────────────────────────────────
@@ -140,7 +141,7 @@ class GameScene extends Phaser.Scene {
 
     for (let i = 0; i < 65; i++) {
       this.add.circle(
-        Phaser.Math.Between(0, W), Phaser.Math.Between(0, VP_Y + 60),
+        Phaser.Math.Between(0, W), Phaser.Math.Between(0, HORIZON_Y + 60),
         Math.random() < 0.22 ? 2 : 1, 0xffffff
       ).setAlpha(Phaser.Math.FloatBetween(0.1, 0.9));
     }
@@ -153,8 +154,8 @@ class GameScene extends Phaser.Scene {
     city.fillStyle(0x0b1726, 1);
     [[0,88,38],[42,122,34],[80,72,42],[124,110,32],[160,90,26],[190,120,48],[242,70,38],
      [286,96,34],[324,82,38],[366,102,32]].forEach(([x, bh, bw]) => {
-      city.fillRect(x, VP_Y + 28 - bh, bw, bh);
-      for (let wy = VP_Y + 32 - bh; wy < VP_Y + 22; wy += 14) {
+      city.fillRect(x, HORIZON_Y + 28 - bh, bw, bh);
+      for (let wy = HORIZON_Y + 32 - bh; wy < HORIZON_Y + 22; wy += 14) {
         for (let wx = x + 4; wx < x + bw - 4; wx += 10) {
           if (Math.random() > 0.52)
             city.fillStyle(0xffe082, 1).fillRect(wx, wy, 4, 6);
@@ -164,7 +165,7 @@ class GameScene extends Phaser.Scene {
     city.setAlpha(0.78);
 
     // Ground fill outside the track (dark dirt)
-    this.add.rectangle(W / 2, (VP_Y + NEAR_Y) / 2 + 20, W, NEAR_Y - VP_Y + 40, 0x130e08)
+    this.add.rectangle(W / 2, (HORIZON_Y + NEAR_Y) / 2 + 20, W, NEAR_Y - HORIZON_Y + 40, 0x130e08)
       .setDepth(1);
   }
 
@@ -173,33 +174,42 @@ class GameScene extends Phaser.Scene {
   _buildTrack() {
     const g = this.add.graphics().setDepth(2);
 
-    // Road surface (trapezoid)
+    const lx = VP_X - TRACK_FAR_HW,  rx = VP_X + TRACK_FAR_HW;   // horizon edges
+    const ln = VP_X - TRACK_NEAR_HW, rn = VP_X + TRACK_NEAR_HW;  // near edges
+
+    // Horizon sky-glow strip (gives a "light on the horizon" feel)
+    const hg = this.add.graphics().setDepth(1);
+    hg.fillGradientStyle(0x1a3a5c, 0x1a3a5c, 0x0d1f36, 0x0d1f36, 1);
+    hg.fillRect(0, HORIZON_Y - 18, W, 36);
+
+    // Road surface — trapezoid with a WIDE top edge (the horizon line)
     g.fillStyle(0x252b3a, 1);
     g.fillPoints([
-      { x: VP_X - 4, y: VP_Y },
-      { x: VP_X + 4, y: VP_Y },
-      { x: VP_X + TRACK_HW, y: NEAR_Y },
-      { x: VP_X - TRACK_HW, y: NEAR_Y },
+      { x: lx, y: HORIZON_Y },
+      { x: rx, y: HORIZON_Y },
+      { x: rn, y: NEAR_Y },
+      { x: ln, y: NEAR_Y },
     ], true);
 
-    // Track edges
-    g.lineStyle(3, 0x607d8b, 0.8);
-    g.beginPath(); g.moveTo(VP_X, VP_Y); g.lineTo(VP_X - TRACK_HW, NEAR_Y); g.strokePath();
-    g.beginPath(); g.moveTo(VP_X, VP_Y); g.lineTo(VP_X + TRACK_HW, NEAR_Y); g.strokePath();
+    // Track edges (converging lines from horizon width to near width)
+    g.lineStyle(3, 0x607d8b, 0.85);
+    g.beginPath(); g.moveTo(lx, HORIZON_Y); g.lineTo(ln, NEAR_Y); g.strokePath();
+    g.beginPath(); g.moveTo(rx, HORIZON_Y); g.lineTo(rn, NEAR_Y); g.strokePath();
 
-    // Lane dividers
-    const divX = [VP_X - TRACK_HW * 0.315, VP_X + TRACK_HW * 0.315];
-    g.lineStyle(2, 0x455a64, 0.5);
-    divX.forEach(nx => {
-      g.beginPath(); g.moveTo(VP_X, VP_Y); g.lineTo(nx, NEAR_Y); g.strokePath();
-    });
+    // Horizon edge line
+    g.lineStyle(2, 0x90a4ae, 0.9);
+    g.beginPath(); g.moveTo(lx, HORIZON_Y); g.lineTo(rx, HORIZON_Y); g.strokePath();
+
+    // Lane dividers — also start wide at horizon, spread to near
+    const dfl = VP_X - TRACK_FAR_HW  * 0.315,  dfr = VP_X + TRACK_FAR_HW  * 0.315;
+    const dnl = VP_X - TRACK_NEAR_HW * 0.315,  dnr = VP_X + TRACK_NEAR_HW * 0.315;
+    g.lineStyle(2, 0x455a64, 0.55);
+    g.beginPath(); g.moveTo(dfl, HORIZON_Y); g.lineTo(dnl, NEAR_Y); g.strokePath();
+    g.beginPath(); g.moveTo(dfr, HORIZON_Y); g.lineTo(dnr, NEAR_Y); g.strokePath();
 
     // Near edge line
-    g.lineStyle(3, 0x607d8b, 0.7);
-    g.beginPath();
-    g.moveTo(VP_X - TRACK_HW, NEAR_Y);
-    g.lineTo(VP_X + TRACK_HW, NEAR_Y);
-    g.strokePath();
+    g.lineStyle(3, 0x607d8b, 0.75);
+    g.beginPath(); g.moveTo(ln, NEAR_Y); g.lineTo(rn, NEAR_Y); g.strokePath();
   }
 
   // ── Scrolling perspective marks ─────────────────────────────────────────────
@@ -214,14 +224,16 @@ class GameScene extends Phaser.Scene {
   }
 
   _updateTrackMarks(dt) {
-    this.markOffset = (this.markOffset + this.speed * dt / (NEAR_Y - VP_Y)) % 1;
+    this.markOffset = (this.markOffset + this.speed * dt / (NEAR_Y - HORIZON_Y)) % 1;
     for (const m of this.marks) {
-      const t = (m.baseT + this.markOffset) % 1;
-      const y  = VP_Y + t * (NEAR_Y - VP_Y);
-      const hw = TRACK_HW * t;
+      const t  = (m.baseT + this.markOffset) % 1;
+      const y  = HORIZON_Y + t * (NEAR_Y - HORIZON_Y);
+      // Track width at this depth — lerp from FAR to NEAR, so marks stay inside the track
+      const hw = TRACK_FAR_HW + t * (TRACK_NEAR_HW - TRACK_FAR_HW);
+      const lh = Math.max(1, t * 2.5);
       m.gfx.clear();
       m.gfx.fillStyle(0x546e7a, t * 0.22);
-      m.gfx.fillRect(VP_X - hw, y - Math.max(1, t * 2.5), hw * 2, Math.max(1, t * 2.5));
+      m.gfx.fillRect(VP_X - hw, y - lh, hw * 2, lh);
     }
   }
 
@@ -231,7 +243,7 @@ class GameScene extends Phaser.Scene {
     // 6 lamp posts on each side at different depth slots
     for (let i = 0; i < 6; i++) {
       const baseT = (i + 0.5) / 6;
-      const worldY = VP_Y + baseT * (NEAR_Y - VP_Y);
+      const worldY = HORIZON_Y + baseT * (NEAR_Y - HORIZON_Y);
       const sc     = pSc(worldY);
       const inset  = TRACK_HW * 1.12;
 
@@ -254,10 +266,10 @@ class GameScene extends Phaser.Scene {
     const speed = this.speed;
     for (const s of this.scenery) {
       // Move the depth parameter
-      s.baseT = (s.baseT + speed * dt / (NEAR_Y - VP_Y)) % 1;
+      s.baseT = (s.baseT + speed * dt / (NEAR_Y - HORIZON_Y)) % 1;
 
       const t       = s.baseT;
-      const worldY  = VP_Y + t * (NEAR_Y - VP_Y);
+      const worldY  = HORIZON_Y + t * (NEAR_Y - HORIZON_Y);
       const sc      = pSc(worldY);
       const inset   = TRACK_HW + 18;
       const sx      = VP_X + s.side * pT(worldY) * inset;
@@ -388,7 +400,7 @@ class GameScene extends Phaser.Scene {
 
       this.gameObjs.push({
         type: 'obstacle', lane,
-        worldY: VP_Y + 6,
+        worldY: HORIZON_Y + 6,
         worldH: h, worldW: w,
         parts: [face, top, side], face, top, side,
         checked: false,
@@ -421,7 +433,7 @@ class GameScene extends Phaser.Scene {
 
     this.gameObjs.push({
       type: 'wagon', lane,
-      worldY: VP_Y + 6,
+      worldY: HORIZON_Y + 6,
       worldW: ww, worldH: wh,
       parts:  [body, roof, wl, wr, ...coins.flatMap(c => [c.obj, c.shine])],
       body, roof, wl, wr, coins,
