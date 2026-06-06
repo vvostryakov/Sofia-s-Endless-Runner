@@ -7,8 +7,8 @@ const W = 400, H = 700;
 const VP_X         = 200;   // centre x
 const HORIZON_Y    = 172;   // y of the horizon LINE (not a point)
 const NEAR_Y       = 592;   // ground y at player level
-const TRACK_FAR_HW  = 42;   // track half-width AT the horizon (gives it real width)
-const TRACK_NEAR_HW = 150;  // track half-width at player level
+const TRACK_FAR_HW  = 115;  // track half-width AT the horizon — wide so it doesn't look like a point
+const TRACK_NEAR_HW = 185;  // track half-width at player level
 
 // Lane centre x at horizon and at player — lerped for any depth
 const LANE_FAR_X  = [-0.63, 0, 0.63].map(f => Math.round(VP_X + f * TRACK_FAR_HW));
