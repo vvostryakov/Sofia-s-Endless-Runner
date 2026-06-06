@@ -114,6 +114,52 @@ class AudioManager {
     return len;
   }
 
+
+  // ── Rhythm Run music — simple beat-test loop, 128 BPM ─────────────────────
+
+  _scheduleRhythm(startTime) {
+    const BPM = 128, beat = 60 / BPM;
+    const len = 16 * beat;
+
+    // Bright lead marks every collectable beat.
+    const lead = [72, 72, 79, 76, 74, 76, 79, 83, 81, 79, 76, 74, 72, 74, 76, 79];
+    lead.forEach((n, i) => {
+      this._note(n, startTime + i * beat, beat * 0.32, i % 4 === 0 ? 0.13 : 0.09, 'square');
+    });
+
+    // Bass pulse keeps the rhythm easy to hear.
+    const bass = [48, 48, 43, 43, 45, 45, 47, 47, 48, 48, 43, 43, 45, 47, 48, 48];
+    bass.forEach((n, i) => {
+      this._note(n, startTime + i * beat, beat * 0.36, 0.12, 'sawtooth');
+    });
+
+    // Drum grid: kick on downbeats, snare on 2 and 4, hats on eighth notes.
+    [0, 4, 8, 12].forEach(i => this._kick(startTime + i * beat));
+    [2, 6, 10, 14].forEach(i => this._snare(startTime + i * beat));
+    for (let i = 0; i < 32; i++) this._hat(startTime + i * beat * 0.5);
+
+    return len;
+  }
+
+  _snare(t) {
+    const ctx = this._ctx;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(190, t);
+    osc.frequency.exponentialRampToValueAtTime(95, t + 0.09);
+    gain.gain.setValueAtTime(0.24, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.11);
+    osc.connect(gain);
+    gain.connect(this._musicGain);
+    osc.start(t);
+    osc.stop(t + 0.13);
+  }
+
+  _hat(t) {
+    this._note(103, t, 0.035, 0.028, 'triangle');
+  }
+
   // ── Loop driver ───────────────────────────────────────────────────────────
 
   _loop(scheduleFn) {
@@ -137,6 +183,13 @@ class AudioManager {
     this.stop();
     this._track = 'game';
     this._loop(this._scheduleGame);
+  }
+
+  playRhythm() {
+    this._init();
+    this.stop();
+    this._track = 'rhythm';
+    this._loop(this._scheduleRhythm);
   }
 
   stop() {
