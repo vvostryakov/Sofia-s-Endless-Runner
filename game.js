@@ -1,20 +1,36 @@
 'use strict';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Screen ───────────────────────────────────────────────────────────────────
+const W = 400, H = 700;
 
-const W  = 400;
-const H  = 700;
+// ─── Perspective ──────────────────────────────────────────────────────────────
+const VP_X  = 200;   // vanishing-point x (centre)
+const VP_Y  = 170;   // vanishing-point y (top of track)
+const NEAR_Y = 590;  // ground y at player level (bottom)
+const TRACK_HW = 150; // track half-width at NEAR_Y
 
-const GROUND_Y    = 570;   // y of ground surface (player feet land here)
-const WAGON_TOP_Y = 415;   // y of wagon top surface (player feet land here)
-const PLAYER_X    = 110;   // fixed player x position
-const PLAYER_HH   = 28;    // half-height of player hitbox  (total 56 px)
-const PLAYER_HW   = 14;    // half-width  of player hitbox  (total 28 px)
-const JUMP_VEL    = -800;
-const BASE_SPEED  = 295;
+// Lane centre x values at NEAR_Y (left / centre / right)
+const LANE_NX = [
+  VP_X - Math.round(TRACK_HW * 0.63),  // ≈ 106
+  VP_X,                                  // 200
+  VP_X + Math.round(TRACK_HW * 0.63),  // ≈ 294
+];
+
+// Perspective helpers
+const pT  = y       => Math.max(0, (y - VP_Y) / (NEAR_Y - VP_Y));
+const pSc = y       => 0.06 + pT(y) * 0.94;
+const lX  = (l, y)  => VP_X + pT(y) * (LANE_NX[l] - VP_X);
+const eY  = (y, h)  => y - h * pSc(y);  // screen-y when elevated by h world-units
+
+// ─── Jump physics ─────────────────────────────────────────────────────────────
+const JUMP_INIT = 460;    // initial upward velocity  (+up, −down)
+const GRAVITY   = 900;    // deceleration per second
+const WAGON_TOP = 72;     // wagon surface, world-units above ground (at near scale)
+
+// ─── Game speed ───────────────────────────────────────────────────────────────
+const BASE_SPEED = 195;   // worldY units / second
 
 // ─── Boot scene ───────────────────────────────────────────────────────────────
-
 class BootScene extends Phaser.Scene {
   constructor() { super('Boot'); }
 
@@ -22,41 +38,42 @@ class BootScene extends Phaser.Scene {
     const cx = W / 2, cy = H / 2;
 
     const sky = this.add.graphics();
-    sky.fillGradientStyle(0x0a1628, 0x0a1628, 0x1e3a5f, 0x1e3a5f, 1);
+    sky.fillGradientStyle(0x070d1a, 0x070d1a, 0x132038, 0x132038, 1);
     sky.fillRect(0, 0, W, H);
 
-    for (let i = 0; i < 55; i++) {
+    for (let i = 0; i < 60; i++) {
       this.add.circle(
-        Phaser.Math.Between(0, W), Phaser.Math.Between(0, 300),
-        Math.random() < 0.3 ? 2 : 1, 0xffffff
-      ).setAlpha(Phaser.Math.FloatBetween(0.2, 0.95));
+        Phaser.Math.Between(0, W), Phaser.Math.Between(0, 320),
+        Math.random() < 0.25 ? 2 : 1, 0xffffff
+      ).setAlpha(Phaser.Math.FloatBetween(0.15, 0.9));
     }
+    this.add.circle(315, 55, 28, 0xfff9c4).setAlpha(0.9);
+    this.add.circle(304, 47, 22, 0x132038).setAlpha(0.5);
 
     this.add.text(cx, cy - 130, "Sofia's", {
       fontSize: '52px', fontFamily: 'Arial Black, Arial',
       fill: '#ffd700', stroke: '#b8860b', strokeThickness: 6,
     }).setOrigin(0.5);
-
     this.add.text(cx, cy - 62, 'Endless Runner', {
       fontSize: '28px', fontFamily: 'Arial',
       fill: '#fff', stroke: '#000', strokeThickness: 4,
     }).setOrigin(0.5);
-
-    this.add.text(cx, cy + 16, 'Tap  /  Space  /  ↑  to jump', {
+    this.add.text(cx, cy + 12, '← → / swipe  –  switch lane', {
       fontSize: '16px', fontFamily: 'Arial', fill: '#aaaaff',
     }).setOrigin(0.5);
-
-    this.add.text(cx, cy + 44, 'Jump on wagons to collect coins!', {
+    this.add.text(cx, cy + 40, '↑ / swipe up  –  jump', {
+      fontSize: '16px', fontFamily: 'Arial', fill: '#aaaaff',
+    }).setOrigin(0.5);
+    this.add.text(cx, cy + 68, 'Jump on wagons to grab coins!', {
       fontSize: '14px', fontFamily: 'Arial', fill: '#88aadd',
     }).setOrigin(0.5);
 
-    const btn = this.add.rectangle(cx, cy + 130, 200, 54, 0xff6b6b)
+    const btn = this.add.rectangle(cx, cy + 145, 200, 54, 0xff6b6b)
       .setInteractive({ useHandCursor: true });
-    this.add.text(cx, cy + 130, 'PLAY', {
+    this.add.text(cx, cy + 145, 'PLAY', {
       fontSize: '28px', fontFamily: 'Arial Black, Arial', fill: '#fff',
     }).setOrigin(0.5);
 
-    // Music starts on first interaction (browser autoplay policy)
     const startMusic = () => audio.playMenu();
     this.input.once('pointerdown', startMusic);
     this.input.keyboard.once('keydown', startMusic);
@@ -69,7 +86,6 @@ class BootScene extends Phaser.Scene {
 }
 
 // ─── Game scene ───────────────────────────────────────────────────────────────
-
 class GameScene extends Phaser.Scene {
   constructor() { super('Game'); }
 
@@ -78,19 +94,30 @@ class GameScene extends Phaser.Scene {
     this.score     = 0;
     this.coinCount = 0;
     this.alive     = true;
-    this.onWagon   = null;   // wagon the player is currently riding, or null
 
-    this.obstacles  = [];
-    this.wagons     = [];
-    this.coinPool   = [];
-    this.lamps      = [];
-    this.ties       = [];
+    // Player state
+    this.pLane   = 1;           // current lane index 0/1/2
+    this.pX      = LANE_NX[1]; // animated x position
+    this.jumpH   = 0;           // height above ground (px, at near scale)
+    this.jumpVel = 0;           // upward velocity
+    this.rideTimer = 0;         // > 0 while riding a wagon
 
-    this.lastObs    = 0;
-    this.lastWagon  = 800;   // small startup delay
+    // Spawning
+    this.gameObjs  = [];
+    this.lastObs   = 0;
+    this.lastWagon = 1000;
+
+    // Track-mark scroll
+    this.markOffset = 0;
+    this.marks      = [];
+
+    // Side-scenery scroll
+    this.scenery    = [];
 
     this._buildBg();
-    this._buildGround();
+    this._buildTrack();
+    this._buildTrackMarks();
+    this._buildSideScenery();
     this._buildPlayer();
     this._buildUI();
     this._buildControls();
@@ -99,303 +126,430 @@ class GameScene extends Phaser.Scene {
 
     this.time.addEvent({
       delay: 4000,
-      callback: () => { this.speed = Math.min(this.speed + 18, 680); },
+      callback: () => { this.speed = Math.min(this.speed + 15, 540); },
       loop: true,
     });
   }
 
-  // ── Background ────────────────────────────────────────────────────────────
+  // ── Static background ───────────────────────────────────────────────────────
 
   _buildBg() {
-    // Sky
     const sky = this.add.graphics();
-    sky.fillGradientStyle(0x080f1e, 0x080f1e, 0x152840, 0x152840, 1);
+    sky.fillGradientStyle(0x060c18, 0x060c18, 0x111d30, 0x111d30, 1);
     sky.fillRect(0, 0, W, H);
 
-    // Stars
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 65; i++) {
       this.add.circle(
-        Phaser.Math.Between(0, W), Phaser.Math.Between(0, 280),
-        Math.random() < 0.25 ? 2 : 1, 0xffffff
-      ).setAlpha(Phaser.Math.FloatBetween(0.15, 0.95));
+        Phaser.Math.Between(0, W), Phaser.Math.Between(0, VP_Y + 60),
+        Math.random() < 0.22 ? 2 : 1, 0xffffff
+      ).setAlpha(Phaser.Math.FloatBetween(0.1, 0.9));
     }
 
-    // Moon
-    this.add.circle(320, 58, 30, 0xfff9c4).setAlpha(0.9);
-    this.add.circle(308, 50, 24, 0x152840).setAlpha(0.5);   // crescent shadow
+    this.add.circle(310, 52, 27, 0xfff9c4).setAlpha(0.88);
+    this.add.circle(300, 45, 21, 0x111d30).setAlpha(0.5);
 
-    // Distant city skyline (static, very dark)
-    const city = this.add.graphics();
-    city.fillStyle(0x0b1a30, 1);
-    [
-      [0, 95, 40], [44, 130, 36], [84, 80, 44], [132, 118, 34],
-      [170, 96, 28], [202, 128, 50], [256, 76, 40], [300, 104, 36],
-      [340, 90, 40], [385, 110, 18],
-    ].forEach(([x, bh, bw]) => {
-      city.fillRect(x, 268 - bh, bw, bh);
-      // A few lit windows
-      for (let wy = 272 - bh; wy < 266; wy += 16) {
-        for (let wx2 = x + 5; wx2 < x + bw - 5; wx2 += 11) {
-          if (Math.random() > 0.55) city.fillStyle(0xffe082, 1).fillRect(wx2, wy, 4, 6);
+    // City silhouette (static, depth 1)
+    const city = this.add.graphics().setDepth(1);
+    city.fillStyle(0x0b1726, 1);
+    [[0,88,38],[42,122,34],[80,72,42],[124,110,32],[160,90,26],[190,120,48],[242,70,38],
+     [286,96,34],[324,82,38],[366,102,32]].forEach(([x, bh, bw]) => {
+      city.fillRect(x, VP_Y + 28 - bh, bw, bh);
+      for (let wy = VP_Y + 32 - bh; wy < VP_Y + 22; wy += 14) {
+        for (let wx = x + 4; wx < x + bw - 4; wx += 10) {
+          if (Math.random() > 0.52)
+            city.fillStyle(0xffe082, 1).fillRect(wx, wy, 4, 6);
         }
       }
     });
-    city.setAlpha(0.8);
+    city.setAlpha(0.78);
 
-    // Mid ground fill
-    this.add.rectangle(W / 2, 530, W, 300, 0x130e09).setDepth(1);
+    // Ground fill outside the track (dark dirt)
+    this.add.rectangle(W / 2, (VP_Y + NEAR_Y) / 2 + 20, W, NEAR_Y - VP_Y + 40, 0x130e08)
+      .setDepth(1);
+  }
 
-    // Ground surface stripe
-    this.add.rectangle(W / 2, GROUND_Y - 1, W, 6, 0x8d6e63).setDepth(3);
+  // ── Track (drawn once) ──────────────────────────────────────────────────────
 
-    // Rails for wagons (two parallel horizontal bars)
-    const r1y = WAGON_TOP_Y + 52;
-    const r2y = WAGON_TOP_Y + 58;
-    this.add.rectangle(W / 2, r1y, W, 5, 0x90a4ae).setDepth(2);
-    this.add.rectangle(W / 2, r2y, W, 5, 0x90a4ae).setDepth(2);
+  _buildTrack() {
+    const g = this.add.graphics().setDepth(2);
 
-    // Scrolling rail ties
-    for (let i = 0; i < 11; i++) {
-      this.ties.push(
-        this.add.rectangle(i * 42 + 10, r1y + 4, 20, 14, 0x6d4c41).setDepth(2)
-      );
+    // Road surface (trapezoid)
+    g.fillStyle(0x252b3a, 1);
+    g.fillPoints([
+      { x: VP_X - 4, y: VP_Y },
+      { x: VP_X + 4, y: VP_Y },
+      { x: VP_X + TRACK_HW, y: NEAR_Y },
+      { x: VP_X - TRACK_HW, y: NEAR_Y },
+    ], true);
+
+    // Track edges
+    g.lineStyle(3, 0x607d8b, 0.8);
+    g.beginPath(); g.moveTo(VP_X, VP_Y); g.lineTo(VP_X - TRACK_HW, NEAR_Y); g.strokePath();
+    g.beginPath(); g.moveTo(VP_X, VP_Y); g.lineTo(VP_X + TRACK_HW, NEAR_Y); g.strokePath();
+
+    // Lane dividers
+    const divX = [VP_X - TRACK_HW * 0.315, VP_X + TRACK_HW * 0.315];
+    g.lineStyle(2, 0x455a64, 0.5);
+    divX.forEach(nx => {
+      g.beginPath(); g.moveTo(VP_X, VP_Y); g.lineTo(nx, NEAR_Y); g.strokePath();
+    });
+
+    // Near edge line
+    g.lineStyle(3, 0x607d8b, 0.7);
+    g.beginPath();
+    g.moveTo(VP_X - TRACK_HW, NEAR_Y);
+    g.lineTo(VP_X + TRACK_HW, NEAR_Y);
+    g.strokePath();
+  }
+
+  // ── Scrolling perspective marks ─────────────────────────────────────────────
+
+  _buildTrackMarks() {
+    for (let i = 0; i < 9; i++) {
+      this.marks.push({
+        baseT: (i + 0.5) / 9,
+        gfx: this.add.graphics().setDepth(3),
+      });
     }
+  }
 
-    // Scrolling lamp posts (parallax at 40 % speed)
+  _updateTrackMarks(dt) {
+    this.markOffset = (this.markOffset + this.speed * dt / (NEAR_Y - VP_Y)) % 1;
+    for (const m of this.marks) {
+      const t = (m.baseT + this.markOffset) % 1;
+      const y  = VP_Y + t * (NEAR_Y - VP_Y);
+      const hw = TRACK_HW * t;
+      m.gfx.clear();
+      m.gfx.fillStyle(0x546e7a, t * 0.22);
+      m.gfx.fillRect(VP_X - hw, y - Math.max(1, t * 2.5), hw * 2, Math.max(1, t * 2.5));
+    }
+  }
+
+  // ── Side scenery (lamp posts parallax) ──────────────────────────────────────
+
+  _buildSideScenery() {
+    // 6 lamp posts on each side at different depth slots
     for (let i = 0; i < 6; i++) {
-      const lx = i * 72 + 36;
-      const post = this.add.rectangle(lx, 500, 4, 65, 0x78909c).setDepth(1);
-      const bulb = this.add.circle(lx, 468, 8, 0xffee58).setAlpha(0.65).setDepth(1);
-      this.lamps.push({ post, bulb, x: lx });
+      const baseT = (i + 0.5) / 6;
+      const worldY = VP_Y + baseT * (NEAR_Y - VP_Y);
+      const sc     = pSc(worldY);
+      const inset  = TRACK_HW * 1.12;
+
+      const mkPost = (side) => {
+        const sx = VP_X + side * (VP_X + pT(worldY) * (inset - 0));
+        const postH  = Math.round(65 * sc);
+        const post   = this.add.rectangle(sx, worldY - postH / 2, Math.round(5 * sc), postH, 0x607d8b)
+          .setDepth(3);
+        const bulb   = this.add.circle(sx, worldY - postH - Math.round(6 * sc), Math.round(7 * sc), 0xffee58)
+          .setAlpha(0.6).setDepth(3);
+        return { post, bulb, baseT, side };
+      };
+
+      this.scenery.push(mkPost(-1));
+      this.scenery.push(mkPost(1));
     }
   }
 
-  // ── Ground ────────────────────────────────────────────────────────────────
+  _updateSideScenery(dt) {
+    const speed = this.speed;
+    for (const s of this.scenery) {
+      // Move the depth parameter
+      s.baseT = (s.baseT + speed * dt / (NEAR_Y - VP_Y)) % 1;
 
-  _buildGround() {
-    this.add.rectangle(W / 2, GROUND_Y + 30, W, 60, 0x3e2723).setDepth(2);
+      const t       = s.baseT;
+      const worldY  = VP_Y + t * (NEAR_Y - VP_Y);
+      const sc      = pSc(worldY);
+      const inset   = TRACK_HW + 18;
+      const sx      = VP_X + s.side * pT(worldY) * inset;
+      const postH   = Math.round(65 * sc);
 
-    // Static physics body — player stands on this
-    this.groundBody = this.add.rectangle(W / 2, GROUND_Y + 12, W, 24, 0x000000, 0).setDepth(2);
-    this.physics.add.existing(this.groundBody, true);
+      s.post.setPosition(sx, worldY - postH / 2)
+        .setSize(Math.max(1, Math.round(5 * sc)), Math.max(1, postH))
+        .setDepth(2 + t * 2);
+      s.bulb.setPosition(sx, worldY - postH - Math.round(6 * sc))
+        .setRadius(Math.max(1, Math.round(7 * sc)))
+        .setAlpha(t * 0.6)
+        .setDepth(2 + t * 2);
+    }
   }
 
-  // ── Player ────────────────────────────────────────────────────────────────
+  // ── Player ──────────────────────────────────────────────────────────────────
 
   _buildPlayer() {
-    this.physics.world.gravity.y = 1900;
+    const d = 10;
+    this.shadow = this.add.ellipse(LANE_NX[1], NEAR_Y + 4, 48, 16, 0x000000)
+      .setAlpha(0.5).setDepth(d - 1);
 
-    // Invisible physics hitbox
-    this.player = this.add.rectangle(
-      PLAYER_X, GROUND_Y - PLAYER_HH,
-      PLAYER_HW * 2, PLAYER_HH * 2,
-      0x000000, 0
-    ).setDepth(6);
-    this.physics.add.existing(this.player, false);
-    this.player.body.allowGravity = true;
-    this.player.body.setMaxVelocityY(1000);
-
-    this.physics.add.collider(this.player, this.groundBody);
-
-    this._wasGrounded = true;
-
-    // Visual parts (positions updated every frame in _syncPlayer)
-    const d = 7;
     this.vis = {
-      legL:  this.add.rectangle(0, 0, 12, 22, 0x1565c0).setDepth(d),
-      legR:  this.add.rectangle(0, 0, 12, 22, 0x1565c0).setDepth(d),
-      body:  this.add.rectangle(0, 0, 30, 32, 0xe91e8c).setDepth(d),
-      head:  this.add.circle(0, 0, 14, 0xffcc99).setDepth(d),
-      hair:  this.add.rectangle(0, 0, 32, 9, 0x5d4037).setDepth(d),
+      legL:  this.add.rectangle(0, 0, 13, 22, 0x1565c0).setDepth(d),
+      legR:  this.add.rectangle(0, 0, 13, 22, 0x1565c0).setDepth(d),
+      body:  this.add.rectangle(0, 0, 32, 34, 0xe91e8c).setDepth(d),
+      armL:  this.add.rectangle(0, 0, 11, 24, 0xffb3ba).setDepth(d),
+      armR:  this.add.rectangle(0, 0, 11, 24, 0xffb3ba).setDepth(d),
+      head:  this.add.circle(0, 0, 15, 0xffcc99).setDepth(d),
+      hair:  this.add.rectangle(0, 0, 33, 10, 0x5d4037).setDepth(d),
       eyeL:  this.add.circle(0, 0, 3, 0x1a1a2e).setDepth(d),
       eyeR:  this.add.circle(0, 0, 3, 0x1a1a2e).setDepth(d),
-      cheek: this.add.circle(0, 0, 4, 0xffb3ba).setAlpha(0.7).setDepth(d),
     };
   }
 
   _syncPlayer(t) {
-    const x  = PLAYER_X;
-    const cy = this.player.y;   // center of hitbox
-    const grounded = this.player.body.blocked.down || this.onWagon !== null;
-    const swing = grounded ? Math.sin(t / 85) : 0;
+    const x  = this.pX;
+    const sy = NEAR_Y - this.jumpH;   // screen y of player feet
+    const grounded = this.jumpH < 2;
+    const swing    = grounded ? Math.sin(t / 88) : 0;
+    const tilt     = grounded ? 0 : Phaser.Math.Clamp(-this.jumpVel / 3000, -0.18, 0.18);
 
-    // Landing squish: briefly compress body on landing
-    const vy = this.player.body.velocity.y;
-    const justLanded = grounded && !this._wasGrounded;
-    if (justLanded) {
-      this.tweens.add({
-        targets: [this.vis.body],
-        scaleY: 0.70, scaleX: 1.25, duration: 60, yoyo: true, ease: 'Power1',
-      });
-      audio.land();
-    }
-    this._wasGrounded = grounded;
+    // Shadow shrinks and fades as player rises
+    const sFrac = Math.max(0.35, 1 - this.jumpH / 130);
+    this.shadow.setPosition(x, NEAR_Y + 4).setScale(sFrac, sFrac * 0.45).setAlpha(sFrac * 0.5);
 
-    // Air tilt: lean back slightly while rising, forward while falling
-    const tilt = grounded ? 0 : Phaser.Math.Clamp(vy / 3000, -0.12, 0.12);
-
-    this.vis.legL.setPosition(x - 8, cy + PLAYER_HH - 9).setScale(1, 1 + swing * 0.42);
-    this.vis.legR.setPosition(x + 8, cy + PLAYER_HH - 9).setScale(1, 1 - swing * 0.42);
-    this.vis.body.setPosition(x, cy - 2).setRotation(tilt);
-    this.vis.head.setPosition(x, cy - 22).setRotation(tilt);
-    this.vis.hair.setPosition(x, cy - 31).setRotation(tilt);
-    this.vis.eyeL.setPosition(x - 5, cy - 25);
-    this.vis.eyeR.setPosition(x + 5, cy - 25);
-    this.vis.cheek.setPosition(x + 9, cy - 20);
+    this.vis.legL.setPosition(x - 9,  sy + 31).setScale(1, 1 + swing * 0.45);
+    this.vis.legR.setPosition(x + 9,  sy + 31).setScale(1, 1 - swing * 0.45);
+    this.vis.body.setPosition(x,      sy + 6).setRotation(tilt);
+    this.vis.armL.setPosition(x - 24, sy + 4).setRotation( swing * 0.5);
+    this.vis.armR.setPosition(x + 24, sy + 4).setRotation(-swing * 0.5);
+    this.vis.head.setPosition(x,      sy - 22).setRotation(tilt);
+    this.vis.hair.setPosition(x,      sy - 32).setRotation(tilt);
+    this.vis.eyeL.setPosition(x - 6,  sy - 26);
+    this.vis.eyeR.setPosition(x + 6,  sy - 26);
   }
 
-  // ── UI ────────────────────────────────────────────────────────────────────
+  // ── UI ──────────────────────────────────────────────────────────────────────
 
   _buildUI() {
-    this.add.rectangle(W / 2, 28, W, 48, 0x000000, 0.55).setDepth(10);
+    this.add.rectangle(W / 2, 28, W, 48, 0x000000, 0.55).setDepth(20);
     this.scoreTxt = this.add.text(W / 2, 28, 'Score: 0', {
       fontSize: '20px', fontFamily: 'Arial', fill: '#fff',
-    }).setOrigin(0.5).setDepth(11);
-    this.add.circle(24, 28, 11, 0xffd700).setDepth(10);
+    }).setOrigin(0.5).setDepth(21);
+    this.add.circle(24, 28, 11, 0xffd700).setDepth(20);
     this.coinTxt = this.add.text(42, 28, '0', {
       fontSize: '20px', fontFamily: 'Arial', fill: '#ffd700',
-    }).setOrigin(0, 0.5).setDepth(11);
+    }).setOrigin(0, 0.5).setDepth(21);
   }
 
-  // ── Controls ──────────────────────────────────────────────────────────────
+  // ── Controls ────────────────────────────────────────────────────────────────
 
   _buildControls() {
     this.cursors  = this.input.keyboard.createCursorKeys();
     this.wKey     = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W);
+    this.aKey     = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A);
+    this.dKey     = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D);
     this.spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
-    // Tap or swipe-up both jump
-    this.input.on('pointerdown', (p) => { this._touchStartY = p.y; });
-    this.input.on('pointerup',   (p) => {
-      if (this._touchStartY - p.y > 20 || Math.abs(this._touchStartY - p.y) < 20) {
-        this._jump();
+    this.input.on('pointerdown', p => { this._touch = { x: p.x, y: p.y }; });
+    this.input.on('pointerup',   p => {
+      if (!this._touch) return;
+      const dx = p.x - this._touch.x;
+      const dy = p.y - this._touch.y;
+      if (Math.abs(dy) > Math.abs(dx)) {
+        if (dy < -25) this._jump();
+      } else if (Math.abs(dx) > 25) {
+        this._switchLane(dx > 0 ? 1 : -1);
       }
+      this._touch = null;
     });
   }
 
   _jump() {
     if (!this.alive) return;
-    if (this.player.body.blocked.down || this.onWagon !== null) {
-      this.onWagon = null;
-      this.player.body.allowGravity = true;
-      this.player.body.setVelocityY(JUMP_VEL);
+    if (this.jumpH < 2 || this.rideTimer > 0) {
+      this.rideTimer = 0;
+      this.jumpVel   = JUMP_INIT;
       audio.jump();
     }
   }
 
-  // ── Obstacle spawning ─────────────────────────────────────────────────────
+  _switchLane(dir) {
+    if (!this.alive) return;
+    const next = Phaser.Math.Clamp(this.pLane + dir, 0, 2);
+    if (next === this.pLane) return;
+    this.pLane = next;
+    audio.switchLane();
+  }
+
+  // ── Spawn helpers ────────────────────────────────────────────────────────────
 
   _spawnObstacle(time) {
-    const type = Phaser.Math.Between(0, 2);
-    let obs;
+    // Optionally block 1 or 2 lanes (always leave at least one clear)
+    const blockedCount = Math.random() < 0.3 ? 2 : 1;
+    const lanes = Phaser.Utils.Array.Shuffle([0, 1, 2]).slice(0, blockedCount);
 
-    if (type === 0) {
-      // Barrel
-      const r = Phaser.Math.Between(18, 28);
-      obs = this.add.circle(W + 32, GROUND_Y - r, r, 0x795548);
-      this.add.circle(W + 32, GROUND_Y - r, r - 7, 0x6d4c41).setAlpha(0.55).setDepth(4);
-    } else if (type === 1) {
-      // Crate
-      const h = Phaser.Math.Between(36, 62);
-      obs = this.add.rectangle(W + 32, GROUND_Y - h / 2, 36, h, 0xd84315);
-    } else {
-      // Spike / bollard
-      const h = Phaser.Math.Between(44, 70);
-      obs = this.add.rectangle(W + 32, GROUND_Y - h / 2, 14, h, 0xb71c1c);
+    for (const lane of lanes) {
+      const h     = Phaser.Math.Between(42, 65);   // height in near-scale world-units
+      const w     = Phaser.Math.Between(30, 48);
+      const color = Phaser.Utils.Array.GetRandom([0xd32f2f, 0xe65100, 0x5d4037]);
+
+      const face = this.add.rectangle(0, 0, 1, 1, color).setDepth(5);
+      const top  = this.add.rectangle(0, 0, 1, 1,
+        Phaser.Display.Color.IntegerToColor(color).lighten(25).color32).setDepth(5);
+      const side = this.add.rectangle(0, 0, 1, 1,
+        Phaser.Display.Color.IntegerToColor(color).darken(20).color32).setDepth(5);
+
+      this.gameObjs.push({
+        type: 'obstacle', lane,
+        worldY: VP_Y + 6,
+        worldH: h, worldW: w,
+        parts: [face, top, side], face, top, side,
+        checked: false,
+      });
     }
-
-    obs.setDepth(4);
-    this.physics.add.existing(obs, false);
-    obs.body.setVelocityX(-this.speed);
-    obs.body.allowGravity = false;
-    this.obstacles.push(obs);
     this.lastObs = time;
   }
 
-  // ── Wagon spawning ────────────────────────────────────────────────────────
-
   _spawnWagon(time) {
-    const ww  = Phaser.Math.Between(130, 185);
-    const wh  = 68;
-    const wx  = W + ww / 2 + 20;
-    const wCy = WAGON_TOP_Y + wh / 2;
+    const lane = Phaser.Math.Between(0, 2);
+    const ww   = 86;   // near-scale width
+    const wh   = 52;   // near-scale body height
 
-    // Main body — carries physics
-    const body = this.add.rectangle(wx, wCy, ww, wh, 0x4a2f20).setDepth(3);
-    this.physics.add.existing(body, false);
-    body.body.setVelocityX(-this.speed);
-    body.body.allowGravity = false;
+    const body = this.add.rectangle(0, 0, 1, 1, 0x4e342e).setDepth(5);
+    const roof = this.add.rectangle(0, 0, 1, 1, 0x6d4c41).setDepth(5);
+    const wl   = this.add.circle(0, 0, 1, 0x1a1a1a).setDepth(5);
+    const wr   = this.add.circle(0, 0, 1, 0x1a1a1a).setDepth(5);
 
-    // Decorative visual parts — synced to body.x each frame (ox = offset from body center)
-    const vp = [];
-
-    const stripe = this.add.rectangle(wx, WAGON_TOP_Y + 8, ww, 16, 0x6d4c41).setDepth(3);
-    vp.push({ obj: stripe, ox: 0 });
-
-    // Vertical ribs
-    for (const ox of [-ww / 2 + 14, 0, ww / 2 - 14]) {
-      const rib = this.add.rectangle(wx + ox, wCy, 6, wh - 18, 0x3e2723).setDepth(3);
-      vp.push({ obj: rib, ox });
-    }
-
-    // Wheels
-    const wheelY = WAGON_TOP_Y + wh + 10;
-    for (const ox of [-ww / 2 + 18, ww / 2 - 18]) {
-      const rim  = this.add.circle(wx + ox, wheelY, 14, 0x212121).setDepth(3);
-      const hub  = this.add.circle(wx + ox, wheelY, 5,  0x616161).setDepth(3);
-      const spH  = this.add.rectangle(wx + ox, wheelY, 22, 2, 0x757575).setDepth(3);
-      const spV  = this.add.rectangle(wx + ox, wheelY, 2, 22, 0x757575).setDepth(3);
-      [rim, hub, spH, spV].forEach(o => vp.push({ obj: o, ox }));
-    }
-
-    // Coins on top
-    const numCoins = Phaser.Math.Between(4, 7);
+    const numCoins = Phaser.Math.Between(3, 6);
     const coins = [];
     for (let i = 0; i < numCoins; i++) {
-      const t  = numCoins > 1 ? i / (numCoins - 1) : 0.5;
-      const cx = wx - ww / 2 + 18 + t * (ww - 36);
-      const cy = WAGON_TOP_Y - 17;
-      const coin = this.add.circle(cx, cy, 11, 0xffd700).setDepth(5);
-      this.add.circle(cx - 2, cy - 2, 5, 0xffe082).setAlpha(0.65).setDepth(5);
-      this.physics.add.existing(coin, false);
-      coin.body.setVelocityX(-this.speed);
-      coin.body.allowGravity = false;
-      coins.push(coin);
-      this.coinPool.push(coin);
+      const t = numCoins > 1 ? i / (numCoins - 1) : 0.5;
+      coins.push({
+        obj:      this.add.circle(0, 0, 1, 0xffd700).setDepth(6),
+        shine:    this.add.circle(0, 0, 1, 0xffe082).setAlpha(0.7).setDepth(6),
+        fracT:    t - 0.5,   // position fraction across wagon width  (−0.5 … +0.5)
+        collected: false,
+      });
     }
 
-    this.wagons.push({ body, ww, wh, visualParts: vp, coins });
+    this.gameObjs.push({
+      type: 'wagon', lane,
+      worldY: VP_Y + 6,
+      worldW: ww, worldH: wh,
+      parts:  [body, roof, wl, wr, ...coins.flatMap(c => [c.obj, c.shine])],
+      body, roof, wl, wr, coins,
+      checked: false,
+    });
     this.lastWagon = time;
   }
 
-  // ── Game over ─────────────────────────────────────────────────────────────
+  // ── Per-frame object rendering ───────────────────────────────────────────────
+
+  _renderObj(obj) {
+    const y  = obj.worldY;
+    const sc = pSc(y);
+    const x  = lX(obj.lane, y);
+    const dp = 4 + pT(y) * 5;   // depth: far objects rendered behind near ones
+
+    if (obj.type === 'obstacle') {
+      const sw = obj.worldW * sc;
+      const sh = obj.worldH * sc;
+      const fy = y - sh / 2;
+
+      obj.face.setPosition(x, fy).setSize(sw, sh).setDepth(dp);
+      // top face (pseudo-3D)
+      const th = sh * 0.18;
+      obj.top.setPosition(x, fy - sh / 2 - th / 2).setSize(sw * 1.06, th).setDepth(dp);
+      // right-side face
+      const sdw = sw * 0.12;
+      obj.side.setPosition(x + sw / 2 + sdw / 2, fy).setSize(sdw, sh).setDepth(dp);
+    }
+
+    if (obj.type === 'wagon') {
+      const sw  = obj.worldW * sc;
+      const sh  = obj.worldH * sc;
+      const suf = eY(y, WAGON_TOP);   // screen-y of wagon top surface
+      const bcy = suf + sh / 2;
+
+      obj.body.setPosition(x, bcy).setSize(sw, sh).setDepth(dp);
+      // Roof stripe
+      const rh = sh * 0.22;
+      obj.roof.setPosition(x, suf - rh / 2).setSize(sw * 1.06, rh).setDepth(dp);
+      // Wheels
+      const wr = Math.max(2, 10 * sc);
+      const wy = suf + sh + wr;
+      obj.wl.setPosition(x - sw * 0.33, wy).setRadius(wr).setDepth(dp);
+      obj.wr.setPosition(x + sw * 0.33, wy).setRadius(wr).setDepth(dp);
+      // Coins on roof
+      obj.coins.forEach(c => {
+        if (c.collected) return;
+        const cr = Math.max(2, 9 * sc);
+        const cx = x + c.fracT * sw;
+        const cy = suf - cr - 4 * sc;
+        c.obj.setPosition(cx, cy).setRadius(cr).setDepth(dp + 1);
+        c.shine.setPosition(cx - cr * 0.3, cy - cr * 0.35)
+          .setRadius(Math.max(1, cr * 0.42)).setDepth(dp + 1);
+      });
+    }
+  }
+
+  // ── Collision / interaction ──────────────────────────────────────────────────
+
+  _handleCollision(obj) {
+    if (obj.checked) return;
+    if (obj.lane !== this.pLane) return;   // different lane — safe
+
+    if (obj.type === 'obstacle') {
+      obj.checked = true;
+      if (this.jumpH < obj.worldH - 8) {
+        this._gameOver();
+      }
+    }
+
+    if (obj.type === 'wagon') {
+      // Player is in the right lane. Decide outcome:
+      if (this.jumpH >= WAGON_TOP - 28 && this.jumpVel <= 0) {
+        // ── Land on wagon ──
+        obj.checked = true;
+        this.jumpH   = WAGON_TOP;
+        this.jumpVel = 0;
+        this.rideTimer = 1100;   // ride for 1.1 s then release
+
+        // Collect all coins immediately
+        obj.coins.forEach(c => {
+          if (!c.collected) {
+            c.collected = true;
+            this.coinCount++;
+            this._coinPop(c.obj.x, c.obj.y);
+            c.obj.setVisible(false);
+            c.shine.setVisible(false);
+            audio.coin();
+          }
+        });
+        this.coinTxt.setText(this.coinCount);
+        audio.land();
+      } else if (this.jumpH < WAGON_TOP - 8) {
+        // ── Hit the side of the wagon ──
+        obj.checked = true;
+        this._gameOver();
+      }
+    }
+  }
+
+  // ── Game over ───────────────────────────────────────────────────────────────
 
   _gameOver() {
     if (!this.alive) return;
     this.alive = false;
-    this.physics.pause();
     audio.gameOver();
 
-    const flash = this.add.rectangle(W / 2, H / 2, W, H, 0xff0000, 0.3).setDepth(20);
+    const flash = this.add.rectangle(W / 2, H / 2, W, H, 0xff0000, 0.3).setDepth(25);
     this.time.delayedCall(200, () => flash.destroy());
 
-    this.add.rectangle(W / 2, H / 2, 340, 260, 0x000000, 0.88).setDepth(20);
-    this.add.text(W / 2, H / 2 - 85, 'GAME OVER', {
+    this.add.rectangle(W / 2, H / 2, 340, 265, 0x000000, 0.9).setDepth(25);
+    this.add.text(W / 2, H / 2 - 88, 'GAME OVER', {
       fontSize: '42px', fontFamily: 'Arial Black, Arial',
       fill: '#ff6b6b', stroke: '#000', strokeThickness: 5,
-    }).setOrigin(0.5).setDepth(21);
-    this.add.text(W / 2, H / 2 - 15, `Score: ${Math.floor(this.score)}`, {
+    }).setOrigin(0.5).setDepth(26);
+    this.add.text(W / 2, H / 2 - 18, `Score: ${Math.floor(this.score)}`, {
       fontSize: '26px', fontFamily: 'Arial', fill: '#fff',
-    }).setOrigin(0.5).setDepth(21);
-    this.add.text(W / 2, H / 2 + 25, `Coins: ${this.coinCount}`, {
+    }).setOrigin(0.5).setDepth(26);
+    this.add.text(W / 2, H / 2 + 22, `Coins: ${this.coinCount}`, {
       fontSize: '22px', fontFamily: 'Arial', fill: '#ffd700',
-    }).setOrigin(0.5).setDepth(21);
+    }).setOrigin(0.5).setDepth(26);
 
-    const btn = this.add.rectangle(W / 2, H / 2 + 90, 190, 50, 0xff6b6b)
-      .setInteractive({ useHandCursor: true }).setDepth(21);
-    this.add.text(W / 2, H / 2 + 90, 'PLAY AGAIN', {
+    const btn = this.add.rectangle(W / 2, H / 2 + 92, 190, 50, 0xff6b6b)
+      .setInteractive({ useHandCursor: true }).setDepth(26);
+    this.add.text(W / 2, H / 2 + 92, 'PLAY AGAIN', {
       fontSize: '22px', fontFamily: 'Arial Black, Arial', fill: '#fff',
-    }).setOrigin(0.5).setDepth(22);
+    }).setOrigin(0.5).setDepth(27);
 
     const restart = () => { audio.playGame(); this.scene.restart(); };
     btn.on('pointerdown', restart);
@@ -405,14 +559,14 @@ class GameScene extends Phaser.Scene {
   _coinPop(x, y) {
     const t = this.add.text(x, y, '+1', {
       fontSize: '18px', fontFamily: 'Arial Black', fill: '#ffd700',
-    }).setOrigin(0.5).setDepth(15);
+    }).setOrigin(0.5).setDepth(22);
     this.tweens.add({
       targets: t, y: y - 50, alpha: 0, duration: 520, ease: 'Power2',
       onComplete: () => t.destroy(),
     });
   }
 
-  // ── Main update ───────────────────────────────────────────────────────────
+  // ── Main update ──────────────────────────────────────────────────────────────
 
   update(time, delta) {
     if (!this.alive) return;
@@ -421,135 +575,69 @@ class GameScene extends Phaser.Scene {
     this.score += delta * 0.015;
     this.scoreTxt.setText('Score: ' + Math.floor(this.score));
 
-    // Jump input
-    if (
-      Phaser.Input.Keyboard.JustDown(this.cursors.up) ||
-      Phaser.Input.Keyboard.JustDown(this.wKey) ||
-      Phaser.Input.Keyboard.JustDown(this.spaceKey)
-    ) {
-      this._jump();
+    // ── Input ──
+    if (Phaser.Input.Keyboard.JustDown(this.cursors.up)   ||
+        Phaser.Input.Keyboard.JustDown(this.wKey)          ||
+        Phaser.Input.Keyboard.JustDown(this.spaceKey))      this._jump();
+    if (Phaser.Input.Keyboard.JustDown(this.cursors.left) ||
+        Phaser.Input.Keyboard.JustDown(this.aKey))          this._switchLane(-1);
+    if (Phaser.Input.Keyboard.JustDown(this.cursors.right)||
+        Phaser.Input.Keyboard.JustDown(this.dKey))          this._switchLane(1);
+
+    // ── Lane transition ──
+    this.pX += (LANE_NX[this.pLane] - this.pX) * 11 * dt;
+
+    // ── Jump / ride physics ──
+    if (this.rideTimer > 0) {
+      this.rideTimer -= delta;
+      this.jumpH   = WAGON_TOP;
+      this.jumpVel = 0;
+      if (this.rideTimer <= 0) {
+        // Dismount: small upward nudge so player floats off naturally
+        this.jumpVel = 80;
+      }
+    } else {
+      this.jumpVel -= GRAVITY * dt;
+      this.jumpH   += this.jumpVel * dt;
+      if (this.jumpH <= 0) { this.jumpH = 0; this.jumpVel = 0; }
     }
 
-    // Parallax: lamp posts at 40 % speed
-    for (const lamp of this.lamps) {
-      lamp.x -= this.speed * 0.4 * dt;
-      if (lamp.x < -20) lamp.x += W + 45;
-      lamp.post.x = lamp.x;
-      lamp.bulb.x = lamp.x;
-    }
+    // ── Objects ──
+    for (let i = this.gameObjs.length - 1; i >= 0; i--) {
+      const obj = this.gameObjs[i];
+      obj.worldY += this.speed * dt;
 
-    // Rail ties scroll at full speed
-    for (const tie of this.ties) {
-      tie.x -= this.speed * dt;
-      if (tie.x < -15) tie.x += W + 50;
-    }
-
-    // ── Wagons ──────────────────────────────────────────────────────────────
-    for (let i = this.wagons.length - 1; i >= 0; i--) {
-      const w = this.wagons[i];
-      if (!w.body.active) { this.wagons.splice(i, 1); continue; }
-
-      w.body.body.setVelocityX(-this.speed);
-
-      // Sync visual parts to body x
-      const bx = w.body.x;
-      for (const { obj, ox } of w.visualParts) obj.x = bx + ox;
-
-      // Sync coin velocities
-      for (const c of w.coins) {
-        if (c.active && c.body) c.body.setVelocityX(-this.speed);
+      if (obj.worldY > NEAR_Y + 80) {
+        obj.parts.forEach(p => p.destroy());
+        this.gameObjs.splice(i, 1);
+        continue;
       }
 
-      // ── Player ↔ wagon interaction ──────────────────────────────────────
-      const wb = w.body.getBounds();
+      this._renderObj(obj);
 
-      if (this.onWagon === w) {
-        // Carry the player: keep them pinned to wagon top
-        if (PLAYER_X >= wb.left - 2 && PLAYER_X <= wb.right + 2) {
-          this.player.body.setVelocityY(0);
-          this.player.body.allowGravity = false;
-          this.player.y = WAGON_TOP_Y - PLAYER_HH;
-        } else {
-          // Walked off the edge — fall
-          this.onWagon = null;
-          this.player.body.allowGravity = true;
-        }
-      } else if (this.onWagon === null && this.player.body.velocity.y >= 0) {
-        // Check for landing on this wagon
-        const pBottom = this.player.y + PLAYER_HH;
-        if (
-          pBottom >= wb.top - 5 && pBottom <= wb.top + 18 &&
-          PLAYER_X >= wb.left  && PLAYER_X <= wb.right
-        ) {
-          this.onWagon = w;
-          this.player.body.setVelocityY(0);
-          this.player.body.allowGravity = false;
-          this.player.y = WAGON_TOP_Y - PLAYER_HH;
-        }
-      }
-
-      // Remove wagon once it scrolls off left edge
-      if (w.body.x < -w.ww - 20) {
-        for (const { obj } of w.visualParts) obj.destroy();
-        w.body.destroy();
-        for (const c of w.coins) { if (c.active) c.destroy(); }
-        if (this.onWagon === w) {
-          this.onWagon = null;
-          this.player.body.allowGravity = true;
-        }
-        this.wagons.splice(i, 1);
+      // Collision window: object is at player depth
+      if (obj.worldY >= NEAR_Y - 18 && obj.worldY <= NEAR_Y + 18) {
+        this._handleCollision(obj);
       }
     }
 
-    // ── Obstacles ────────────────────────────────────────────────────────────
-    for (let i = this.obstacles.length - 1; i >= 0; i--) {
-      const obs = this.obstacles[i];
-      if (!obs.active) { this.obstacles.splice(i, 1); continue; }
-      if (obs.body) obs.body.setVelocityX(-this.speed);
-      if (obs.x < -80) { obs.destroy(); this.obstacles.splice(i, 1); continue; }
+    // ── Scrolling track marks & scenery ──
+    this._updateTrackMarks(dt);
+    this._updateSideScenery(dt);
 
-      // Shrink bounds slightly for forgiveness
-      const pb = this.player.getBounds();
-      const ob = obs.getBounds();
-      pb.x += 6;  pb.width  -= 12;  pb.y += 6;  pb.height -= 12;
-      ob.x += 4;  ob.width  -= 8;   ob.y += 4;  ob.height -= 8;
-      if (Phaser.Geom.Intersects.RectangleToRectangle(pb, ob)) {
-        this._gameOver(); return;
-      }
-    }
-
-    // ── Coins ────────────────────────────────────────────────────────────────
-    for (let i = this.coinPool.length - 1; i >= 0; i--) {
-      const coin = this.coinPool[i];
-      if (!coin.active) { this.coinPool.splice(i, 1); continue; }
-      if (coin.body) coin.body.setVelocityX(-this.speed);
-      if (coin.x < -40) { coin.destroy(); this.coinPool.splice(i, 1); continue; }
-
-      const dx = coin.x - PLAYER_X;
-      const dy = coin.y - this.player.y;
-      if (dx * dx + dy * dy < 30 * 30) {
-        this.coinCount++;
-        this.coinTxt.setText(this.coinCount);
-        audio.coin();
-        this._coinPop(coin.x, coin.y);
-        coin.destroy();
-        this.coinPool.splice(i, 1);
-      }
-    }
-
-    // ── Spawning ─────────────────────────────────────────────────────────────
-    const obsGap   = Math.max(900,  2000 - this.speed * 2.2);
-    const wagonGap = Math.max(4500, 8000 - this.speed * 6);
+    // ── Spawning ──
+    const obsGap   = Math.max(900,  2200 - this.speed * 4.5);
+    const wagonGap = Math.max(4500, 9000 - this.speed * 15);
 
     if (time - this.lastObs > obsGap) {
       this._spawnObstacle(time);
     }
     if (time - this.lastWagon > wagonGap) {
       this._spawnWagon(time);
-      this.lastObs = time + 600;   // breathing room after a wagon
+      this.lastObs = time + 500;   // gap after wagon
     }
 
-    // ── Player visuals ───────────────────────────────────────────────────────
+    // ── Player visuals ──
     this._syncPlayer(time);
   }
 }
@@ -558,11 +646,8 @@ class GameScene extends Phaser.Scene {
 
 const config = {
   type: Phaser.AUTO,
-  backgroundColor: '#080f1e',
-  physics: {
-    default: 'arcade',
-    arcade: { gravity: { y: 0 }, debug: false },
-  },
+  backgroundColor: '#060c18',
+  physics: { default: 'arcade', arcade: { gravity: { y: 0 }, debug: false } },
   scene: [BootScene, GameScene],
   scale: {
     parent: 'game-container',
