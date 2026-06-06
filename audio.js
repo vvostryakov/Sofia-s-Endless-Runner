@@ -145,6 +145,38 @@ class AudioManager {
 
   // ── SFX ───────────────────────────────────────────────────────────────────
 
+  jump() {
+    this._init();
+    const ctx = this._ctx, t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(180, t);
+    osc.frequency.exponentialRampToValueAtTime(520, t + 0.09);
+    gain.gain.setValueAtTime(0.18, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
+    osc.connect(gain);
+    gain.connect(this._sfxGain);
+    osc.start(t);
+    osc.stop(t + 0.15);
+  }
+
+  land() {
+    this._init();
+    const ctx = this._ctx, t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(220, t);
+    osc.frequency.exponentialRampToValueAtTime(80, t + 0.08);
+    gain.gain.setValueAtTime(0.22, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+    osc.connect(gain);
+    gain.connect(this._sfxGain);
+    osc.start(t);
+    osc.stop(t + 0.12);
+  }
+
   coin() {
     this._init();
     const t = this._ctx.currentTime;
