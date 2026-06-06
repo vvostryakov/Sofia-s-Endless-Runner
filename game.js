@@ -7,7 +7,7 @@ const W = 400, H = 700;
 const VP_X          = W / 2;
 const HIT_LINE_Y    = 586;
 const NEAR_Y        = HIT_LINE_Y + 34;
-const COLLECTION_Y  = HIT_LINE_Y - 12;
+const COLLECTION_Y  = NEAR_Y - 6;
 const COLLECTION_RADIUS = 58;
 const HORIZON_Y     = 326;
 const CAMERA_LOOK_Y = HORIZON_Y - 42;
@@ -252,6 +252,7 @@ class GameScene extends Phaser.Scene {
     this.beatPulse = 0;
     this.collectPulse = 0;
     this.playerBounce = 0;
+    this.footstepPulse = 0;
 
     this.pLane = 1;
     this.pX = this._laneX(1, NEAR_Y);
@@ -447,9 +448,10 @@ class GameScene extends Phaser.Scene {
       const angle = (l.side < 0 ? Math.PI - 0.44 : 0.44) + l.angleJitter;
       const p1 = this._tunnelPoint(t, angle);
       const p2 = this._tunnelPoint(Math.min(1, t + 0.08 + this.speed / 6200), angle + l.side * 0.04);
-      const alpha = 0.04 + t * 0.26 + this.beatPulse * 0.1;
+      const comboEnergy = Phaser.Math.Clamp((this.combo - 1) / 4, 0, 1);
+      const alpha = 0.04 + t * 0.26 + this.beatPulse * 0.1 + comboEnergy * 0.08;
       l.gfx.clear();
-      l.gfx.lineStyle(Math.max(1, t * 5), 0x80deea, alpha);
+      l.gfx.lineStyle(Math.max(1, t * (5 + comboEnergy * 2)), 0x80deea, alpha);
       l.gfx.beginPath();
       l.gfx.moveTo(p1.x, p1.y);
       l.gfx.lineTo(p2.x, p2.y);
@@ -463,10 +465,11 @@ class GameScene extends Phaser.Scene {
     const hg = this.horizonG;
     g.clear();
     hg.clear();
+    const comboEnergy = Phaser.Math.Clamp((this.combo - 1) / 4, 0, 1);
 
     hg.fillStyle(0x00131f, 0.5);
     hg.fillCircle(VP_X, VP_Y, 58);
-    hg.lineStyle(2, 0x51b7ff, 0.22);
+    hg.lineStyle(2, 0x51b7ff, 0.22 + comboEnergy * 0.08);
     hg.strokeCircle(VP_X, VP_Y, 65);
 
     const segments = 30;
@@ -501,7 +504,7 @@ class GameScene extends Phaser.Scene {
     // uniformly in every direction.
     for (let i = 0; i <= segments; i++) {
       const t = i / segments;
-      const alpha = 0.012 + t * 0.025 + (this.beatPulse || 0) * 0.02;
+      const alpha = 0.012 + t * 0.025 + (this.beatPulse || 0) * 0.02 + comboEnergy * 0.012;
       if (i % 6 === 0) ringStroke(t, 0x244660, alpha, Math.max(1, t * 1.5));
     }
 
@@ -522,7 +525,7 @@ class GameScene extends Phaser.Scene {
     for (let i = 0; i < 6; i++) {
       const t = (i / 6 + this.markOffset) % 1;
       const pulseT = Math.max(t, 0.025);
-      ringStroke(pulseT, 0x80deea, 0.035 + pulseT * 0.12 + (this.beatPulse || 0) * 0.04, Math.max(1, pulseT * 3));
+      ringStroke(pulseT, 0x80deea, 0.035 + pulseT * 0.12 + (this.beatPulse || 0) * 0.04 + comboEnergy * 0.035, Math.max(1, pulseT * (3 + comboEnergy)));
     }
 
     const wallLeft = left.map((pt, i) => {
@@ -548,7 +551,7 @@ class GameScene extends Phaser.Scene {
     g.fillPoints([...left, ...right.slice().reverse()], true);
 
     const laneFill = (a, b, color, alpha) => {
-      g.fillStyle(color, alpha + (this.beatPulse || 0) * 0.025);
+      g.fillStyle(color, alpha + (this.beatPulse || 0) * 0.025 + comboEnergy * 0.035);
       g.fillPoints([...a, ...b.slice().reverse()], true);
     };
     laneFill(left, lane1, 0x102a3f, 0.18);
@@ -567,8 +570,8 @@ class GameScene extends Phaser.Scene {
     strokeLine(ceilRight, 2, 0x19314a, 0.62);
     strokeLine(wallLeft, 2, 0x263f5b, 0.8);
     strokeLine(wallRight, 2, 0x263f5b, 0.8);
-    strokeLine(left, 5, 0x00e5ff, 0.72);
-    strokeLine(right, 5, 0x00e5ff, 0.72);
+    strokeLine(left, 5, 0x00e5ff, 0.72 + comboEnergy * 0.1);
+    strokeLine(right, 5, 0x00e5ff, 0.72 + comboEnergy * 0.1);
     strokeLine(lane1, 4, 0xb2ebff, 0.9);
     strokeLine(lane2, 4, 0xb2ebff, 0.9);
 
@@ -665,8 +668,9 @@ class GameScene extends Phaser.Scene {
 
       const lightX = pos.x + nx * panelH * 0.1;
       const lightY = pos.y + ny * panelH * 0.1;
-      s.glow.setPosition(lightX, lightY).setRadius(Math.max(2, 18 * sc * (1 + (this.beatPulse || 0) * 0.3))).setAlpha(0.04 + t * 0.18 + (this.beatPulse || 0) * 0.12).setDepth(depth + 0.1);
-      s.bulb.setPosition(lightX, lightY).setRadius(Math.max(1, 5 * sc)).setAlpha(0.18 + t * 0.48 + (this.beatPulse || 0) * 0.2).setDepth(depth + 0.2);
+      const comboEnergy = Phaser.Math.Clamp((this.combo - 1) / 4, 0, 1);
+      s.glow.setPosition(lightX, lightY).setRadius(Math.max(2, 18 * sc * (1 + (this.beatPulse || 0) * 0.3 + comboEnergy * 0.22))).setAlpha(0.04 + t * 0.18 + (this.beatPulse || 0) * 0.12 + comboEnergy * 0.08).setDepth(depth + 0.1);
+      s.bulb.setPosition(lightX, lightY).setRadius(Math.max(1, 5 * sc * (1 + comboEnergy * 0.12))).setAlpha(0.18 + t * 0.48 + (this.beatPulse || 0) * 0.2 + comboEnergy * 0.08).setDepth(depth + 0.2);
     }
   }
 
@@ -674,6 +678,7 @@ class GameScene extends Phaser.Scene {
     const d = 7;
     this.shadow = this.add.ellipse(this._laneX(1, NEAR_Y), NEAR_Y + 4, 48, 16, 0x000000).setAlpha(0.5).setDepth(d - 1);
     this.vis = {
+      collectTrail: this.add.ellipse(0, 0, 86, 20, 0x00e5ff, 0.08).setDepth(d - 0.6),
       armL: this.add.rectangle(0, 0, 10, 25, 0xffb3ba).setDepth(d - 0.2),
       armR: this.add.rectangle(0, 0, 10, 25, 0xffb3ba).setDepth(d - 0.2),
       legL: this.add.rectangle(0, 0, 13, 25, 0x1565c0).setDepth(d),
@@ -682,6 +687,9 @@ class GameScene extends Phaser.Scene {
       backStripe: this.add.rectangle(0, 0, 5, 28, 0xff9bd0).setDepth(d + 0.2),
       head: this.add.circle(0, 0, 15, 0xffcc99).setDepth(d + 0.15),
       hair: this.add.rectangle(0, 0, 35, 16, 0x5d4037).setDepth(d + 0.3),
+      headphoneL: this.add.circle(0, 0, 5, 0x00e5ff, 0.78).setStrokeStyle(2, 0xffffff, 0.46).setDepth(d + 0.45),
+      headphoneR: this.add.circle(0, 0, 5, 0x00e5ff, 0.78).setStrokeStyle(2, 0xffffff, 0.46).setDepth(d + 0.45),
+      headphoneBand: this.add.rectangle(0, 0, 25, 4, 0x00e5ff, 0.62).setDepth(d + 0.44),
       ponytail: this.add.ellipse(0, 0, 16, 24, 0x4e342e).setDepth(d + 0.25),
       bow: this.add.triangle(0, 0, -8, -5, -8, 5, 8, 0, 0xffd54f).setDepth(d + 0.4),
       shield: this.add.ellipse(0, 0, 68, 88, 0x4fc3f7, 0.16).setStrokeStyle(3, 0x81d4fa, 0.92).setDepth(d + 1).setVisible(false),
@@ -705,6 +713,12 @@ class GameScene extends Phaser.Scene {
     const pos = (offset) => offset * ps;
     const shieldScale = ps * (1 + (this.shieldCharges > 0 ? Math.sin(t / 140) * 0.06 : 0));
     const fieldScale = 1 + (this.beatPulse || 0) * 0.08 + this.collectPulse * 0.22 + comboEnergy * 0.06;
+    const stepPulse = grounded && !sliding ? (0.5 + Math.abs(Math.sin(t / 82)) * 0.5) : 0;
+    this.footstepPulse = Math.max(this.footstepPulse, stepPulse * 0.24);
+    this.vis.collectTrail
+      .setPosition(x, PLAYER_ANCHOR_Y + 2)
+      .setScale(ps * (1 + comboEnergy * 0.28 + this.collectPulse * 0.34), ps * (0.8 + this.footstepPulse + this.collectPulse * 0.4))
+      .setAlpha(0.05 + comboEnergy * 0.09 + this.collectPulse * 0.13 + this.footstepPulse * 0.08);
     this.vis.collectGlow
       .setPosition(x, fieldY)
       .setScale(fieldScale)
@@ -722,8 +736,15 @@ class GameScene extends Phaser.Scene {
     this.vis.backStripe.setPosition(x, sy + pos(sliding ? 17 : 7)).setScale(ps, ps * (sliding ? 0.62 : 1)).setRotation(sliding ? Math.PI / 2 : tilt);
     this.vis.armL.setPosition(x - pos(sliding ? 18 : 23), sy + pos(sliding ? 19 : 7)).setScale(ps).setRotation(sliding ? 1.15 : swing * 0.5);
     this.vis.armR.setPosition(x + pos(sliding ? 18 : 23), sy + pos(sliding ? 19 : 7)).setScale(ps).setRotation(sliding ? 1.15 : -swing * 0.5);
-    this.vis.head.setPosition(x + pos(sliding ? 31 : 0), sy + pos(sliding ? 11 : -22)).setScale(ps).setRotation(sliding ? Math.PI / 2 : tilt);
-    this.vis.hair.setPosition(x + pos(sliding ? 38 : 0), sy + pos(sliding ? 10 : -29)).setScale(ps).setRotation(sliding ? Math.PI / 2 : tilt);
+    const headX = x + pos(sliding ? 31 : 0);
+    const headY = sy + pos(sliding ? 11 : -22);
+    const headRot = sliding ? Math.PI / 2 : tilt;
+    const headphoneFlash = 0.52 + this.collectPulse * 0.44 + comboEnergy * 0.24;
+    this.vis.head.setPosition(headX, headY).setScale(ps).setRotation(headRot);
+    this.vis.hair.setPosition(x + pos(sliding ? 38 : 0), sy + pos(sliding ? 10 : -29)).setScale(ps).setRotation(headRot);
+    this.vis.headphoneL.setPosition(headX - pos(sliding ? 0 : 14), headY + pos(sliding ? -11 : -1)).setScale(ps * (1 + this.collectPulse * 0.16)).setAlpha(headphoneFlash).setRotation(headRot);
+    this.vis.headphoneR.setPosition(headX + pos(sliding ? 0 : 14), headY + pos(sliding ? 11 : -1)).setScale(ps * (1 + this.collectPulse * 0.16)).setAlpha(headphoneFlash).setRotation(headRot);
+    this.vis.headphoneBand.setPosition(headX, headY - pos(sliding ? 0 : 13)).setScale(ps, ps).setAlpha(0.28 + this.collectPulse * 0.34 + comboEnergy * 0.18).setRotation(headRot);
     this.vis.ponytail.setPosition(x + pos(sliding ? 24 : 0), sy + pos(sliding ? 22 : -17)).setScale(ps).setRotation(sliding ? Math.PI / 2 : tilt);
     this.vis.bow.setPosition(x + pos(sliding ? 19 : 0), sy + pos(sliding ? 23 : -18)).setScale(ps).setRotation(sliding ? Math.PI / 2 : tilt);
   }
@@ -1296,8 +1317,25 @@ class GameScene extends Phaser.Scene {
       ease: 'Sine.easeOut',
       onComplete: () => ring.destroy(),
     });
-    const beam = this.add.line(0, 0, x, y, this.pX, fieldY, color, 0.42).setOrigin(0, 0).setLineWidth(3).setDepth(20);
+    const beam = this.add.line(0, 0, x, y, this.pX, fieldY, color, 0.42 + comboEnergy * 0.18).setOrigin(0, 0).setLineWidth(3 + comboEnergy * 2).setDepth(20);
     this.tweens.add({ targets: beam, alpha: 0, duration: 180, ease: 'Quad.easeOut', onComplete: () => beam.destroy() });
+
+    const burstCount = 5 + Math.round(comboEnergy * 5);
+    for (let i = 0; i < burstCount; i++) {
+      const spark = this.add.circle(this.pX, fieldY, Phaser.Math.FloatBetween(2, 4 + comboEnergy * 2), color, 0.78).setDepth(21);
+      const ang = Phaser.Math.FloatBetween(-Math.PI, Math.PI);
+      const dist = Phaser.Math.FloatBetween(16, 36 + comboEnergy * 24);
+      this.tweens.add({
+        targets: spark,
+        x: this.pX + Math.cos(ang) * dist,
+        y: fieldY + Math.sin(ang) * dist,
+        scale: 0.12,
+        alpha: 0,
+        duration: Phaser.Math.Between(220, 420),
+        ease: 'Quad.easeOut',
+        onComplete: () => spark.destroy(),
+      });
+    }
   }
 
   _coinPop(x, y) {
@@ -1369,6 +1407,7 @@ class GameScene extends Phaser.Scene {
     this.beatPulse = Math.max(0, this.beatPulse - dt * (this.rhythmMode ? 4.4 : 2.2));
     this.collectPulse = Math.max(0, this.collectPulse - dt * 5.8);
     this.playerBounce = Math.max(0, this.playerBounce - dt * 6.5);
+    this.footstepPulse = Math.max(0, this.footstepPulse - dt * 5.2);
     this.distance += this.speed * dt;
     this.speed = Math.min(MAX_SPEED, BASE_SPEED + this.runTime * 0.0017 + this.distance * 0.01);
     this.level = 1 + Math.floor(this.distance / 950);
