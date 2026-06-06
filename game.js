@@ -5,24 +5,26 @@ const W = 400, H = 700;
 
 // ─── Perspective ──────────────────────────────────────────────────────────────
 const VP_X          = W / 2;
-const HIT_LINE_Y    = 612;
-const NEAR_Y        = HIT_LINE_Y;
-const HORIZON_Y     = 300;
-const CAMERA_LOOK_Y = HORIZON_Y - 32;
+const HIT_LINE_Y    = 586;
+const NEAR_Y        = HIT_LINE_Y + 34;
+const COLLECTION_Y  = HIT_LINE_Y - 12;
+const COLLECTION_RADIUS = 58;
+const HORIZON_Y     = 326;
+const CAMERA_LOOK_Y = HORIZON_Y - 42;
 const VP_Y          = CAMERA_LOOK_Y;
 const ROAD_END_Y    = NEAR_Y;
-const TRACK_FAR_HW  = 10;
-const TRACK_NEAR_HW = 328;
-const TUNNEL_NEAR_RX = 340;
-const TUNNEL_NEAR_RY = 270;
-const PLAYER_ANCHOR_Y = H - 34;
-const PLAYER_DRAW_SCALE = 0.82;
-const PLAYER_VISUAL_LIFT = 8;
+const TRACK_FAR_HW  = 16;
+const TRACK_NEAR_HW = 352;
+const TUNNEL_NEAR_RX = 360;
+const TUNNEL_NEAR_RY = 286;
+const PLAYER_ANCHOR_Y = NEAR_Y + 20;
+const PLAYER_DRAW_SCALE = 1.06;
+const PLAYER_VISUAL_LIFT = 10;
 
 const pT  = y      => Phaser.Math.Clamp((y - HORIZON_Y) / (NEAR_Y - HORIZON_Y), 0, 1);
-const pEase = y    => Math.pow(pT(y), 1.55);
-const pSc = y      => 0.055 + pEase(y) * 1.48;
-const projectY = y => VP_Y + Math.pow(pT(y), 1.08) * (NEAR_Y - VP_Y);
+const pEase = y    => Math.pow(pT(y), 1.34);
+const pSc = y      => 0.074 + pEase(y) * 1.58;
+const projectY = y => VP_Y + Math.pow(pT(y), 1.03) * (NEAR_Y - VP_Y);
 const eY  = (y, h) => projectY(y) - h * pSc(y);
 
 // ─── MVP tuning ───────────────────────────────────────────────────────────────
@@ -47,11 +49,11 @@ const DOUBLE_JUMP_INIT = 370;
 const SAFE_START_MS = 1300;
 const RHYTHM_BPM = 128;
 const RHYTHM_BEAT_MS = 60000 / RHYTHM_BPM;
-const RHYTHM_APPROACH_BEATS = 7;
+const RHYTHM_APPROACH_BEATS = 6;
 const RHYTHM_APPROACH_MS = RHYTHM_BEAT_MS * RHYTHM_APPROACH_BEATS;
 const RHYTHM_BEAT_WINDOW_MS = 160;
 const RHYTHM_LANES = [1, 1, 2, 1, 0, 1, 2, 2, 1, 0, 0, 1, 2, 1, 0, 1];
-const TURN_MAX_OFFSET = 42;
+const TURN_MAX_OFFSET = 34;
 const TURN_NEAR_FACTOR = 0.05;
 const TURN_CHANGE_MIN_MS = 2400;
 const TURN_CHANGE_MAX_MS = 4300;
@@ -248,6 +250,8 @@ class GameScene extends Phaser.Scene {
     this.nextRhythmBeat = RHYTHM_APPROACH_BEATS;
     this.lastBeatPulse = -1;
     this.beatPulse = 0;
+    this.collectPulse = 0;
+    this.playerBounce = 0;
 
     this.pLane = 1;
     this.pX = this._laneX(1, NEAR_Y);
@@ -293,7 +297,7 @@ class GameScene extends Phaser.Scene {
     tunnelGlow.lineStyle(2, 0x51b7ff, 0.2);
     tunnelGlow.strokeCircle(VP_X, VP_Y, 68);
 
-    for (let i = 0; i < 80; i++) {
+    for (let i = 0; i < 48; i++) {
       const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
       const radius = Phaser.Math.FloatBetween(48, Math.max(W, H) * 0.72);
       const x = VP_X + Math.cos(angle) * radius * Phaser.Math.FloatBetween(0.72, 1.08);
@@ -364,7 +368,7 @@ class GameScene extends Phaser.Scene {
   _buildHitLine() {
     this.hitLineG = this.add.graphics().setDepth(18);
     this.hitLineGlow = this.add.rectangle(W / 2, HIT_LINE_Y, W, 1, 0x00e5ff, 0.16).setDepth(17);
-    this.hitPrompt = this.add.text(W / 2, HIT_LINE_Y + 24, 'HIT  •  SWIPE LANES', {
+    this.hitPrompt = this.add.text(W / 2, HIT_LINE_Y + 30, 'COLLECT  •  SWIPE LANES', {
       fontSize: '10px', fontFamily: 'Arial Black, Arial', fill: '#b2ebff', stroke: '#00121f', strokeThickness: 2,
       letterSpacing: 2,
     }).setOrigin(0.5).setDepth(19).setAlpha(0.72);
@@ -375,40 +379,51 @@ class GameScene extends Phaser.Scene {
     if (!this.hitLineG) return;
     const g = this.hitLineG;
     g.clear();
-    const t = pT(HIT_LINE_Y);
-    const cx = this._curveCenterX(HIT_LINE_Y);
-    const hw = this._trackHalfWidth(t) * 0.96;
+    const t = pT(COLLECTION_Y);
+    const cx = this._curveCenterX(COLLECTION_Y);
+    const hw = this._trackHalfWidth(t) * 0.86;
     const pulse = this.beatPulse || 0;
-    const y = projectY(HIT_LINE_Y);
+    const collectPulse = this.collectPulse || 0;
+    const y = projectY(COLLECTION_Y);
     const laneA = cx - hw * 0.333;
     const laneB = cx + hw * 0.333;
 
     this.hitLineGlow
       .setPosition(cx, y)
-      .setSize(hw * 2.08, 10 + pulse * 22)
-      .setAlpha(0.12 + pulse * 0.22);
+      .setSize(hw * 1.92, 12 + pulse * 18 + collectPulse * 18)
+      .setAlpha(0.08 + pulse * 0.18 + collectPulse * 0.16);
 
-    g.lineStyle(10 + pulse * 6, 0x00e5ff, 0.18 + pulse * 0.18);
+    // The old flat hit line is now a soft absorption band that sits in front of
+    // the runner. It keeps rhythm timing readable without implying notes should
+    // pass through the avatar model.
+    g.lineStyle(8 + pulse * 5, 0x00e5ff, 0.12 + pulse * 0.14);
     g.beginPath();
     g.moveTo(cx - hw, y);
     g.lineTo(cx + hw, y);
     g.strokePath();
-    g.lineStyle(3 + pulse * 2, 0xe0ffff, 0.9);
+    g.lineStyle(2 + pulse * 1.5, 0xe0ffff, 0.68 + pulse * 0.2);
     g.beginPath();
     g.moveTo(cx - hw, y);
     g.lineTo(cx + hw, y);
     g.strokePath();
 
     [cx - hw, laneA, laneB, cx + hw].forEach((x, i) => {
-      g.lineStyle(i === 0 || i === 3 ? 2 : 1, 0xb2ebff, 0.38 + pulse * 0.22);
+      g.lineStyle(i === 0 || i === 3 ? 2 : 1, 0xb2ebff, 0.26 + pulse * 0.18);
       g.beginPath();
-      g.moveTo(x, y - 12);
-      g.lineTo(x, y + 12);
+      g.moveTo(x, y - 10);
+      g.lineTo(x, y + 10);
       g.strokePath();
     });
 
-    g.lineStyle(1, 0xfff176, 0.28 + pulse * 0.44);
-    g.strokeCircle(cx, y, 22 + pulse * 24);
+    const playerX = this.pX || this._laneX(this.pLane || 1, COLLECTION_Y);
+    const fieldY = PLAYER_ANCHOR_Y - 42;
+    const fieldR = COLLECTION_RADIUS + pulse * 8 + collectPulse * 16;
+    g.lineStyle(12, 0xfff176, 0.04 + pulse * 0.04 + collectPulse * 0.05);
+    g.strokeCircle(playerX, fieldY, fieldR + 8);
+    g.lineStyle(3 + collectPulse * 3, 0xfff176, 0.44 + pulse * 0.28 + collectPulse * 0.34);
+    g.strokeCircle(playerX, fieldY, fieldR);
+    g.lineStyle(2, 0x00e5ff, 0.24 + collectPulse * 0.3);
+    g.strokeCircle(playerX, fieldY, fieldR * 0.72);
   }
 
   _buildSpeedLines() {
@@ -487,11 +502,11 @@ class GameScene extends Phaser.Scene {
     for (let i = 0; i <= segments; i++) {
       const t = i / segments;
       const alpha = 0.012 + t * 0.025 + (this.beatPulse || 0) * 0.02;
-      if (i % 5 === 0) ringStroke(t, 0x244660, alpha, Math.max(1, t * 1.5));
+      if (i % 6 === 0) ringStroke(t, 0x244660, alpha, Math.max(1, t * 1.5));
     }
 
-    for (let i = 0; i < 10; i++) {
-      const angle = (i / 10) * Math.PI * 2;
+    for (let i = 0; i < 6; i++) {
+      const angle = (i / 6) * Math.PI * 2;
       const inner = this._tunnelPoint(0.03, angle);
       const outer = this._tunnelPoint(1, angle);
       const sideGlow = Math.abs(Math.sin(angle));
@@ -504,8 +519,8 @@ class GameScene extends Phaser.Scene {
 
     // Animated depth rings expand from the center to the top, bottom, and sides.
     // This is the main forward-motion cue for the tunnel effect.
-    for (let i = 0; i < 7; i++) {
-      const t = (i / 7 + this.markOffset) % 1;
+    for (let i = 0; i < 6; i++) {
+      const t = (i / 6 + this.markOffset) % 1;
       const pulseT = Math.max(t, 0.025);
       ringStroke(pulseT, 0x80deea, 0.035 + pulseT * 0.12 + (this.beatPulse || 0) * 0.04, Math.max(1, pulseT * 3));
     }
@@ -552,10 +567,10 @@ class GameScene extends Phaser.Scene {
     strokeLine(ceilRight, 2, 0x19314a, 0.62);
     strokeLine(wallLeft, 2, 0x263f5b, 0.8);
     strokeLine(wallRight, 2, 0x263f5b, 0.8);
-    strokeLine(left, 5, 0x00e5ff, 0.82);
-    strokeLine(right, 5, 0x00e5ff, 0.82);
-    strokeLine(lane1, 3, 0xb2ebff, 0.82);
-    strokeLine(lane2, 3, 0xb2ebff, 0.82);
+    strokeLine(left, 5, 0x00e5ff, 0.72);
+    strokeLine(right, 5, 0x00e5ff, 0.72);
+    strokeLine(lane1, 4, 0xb2ebff, 0.9);
+    strokeLine(lane2, 4, 0xb2ebff, 0.9);
 
     for (let i = 1; i < segments; i += 5) {
       const t = i / segments;
@@ -607,8 +622,8 @@ class GameScene extends Phaser.Scene {
   }
 
   _buildSideScenery() {
-    for (let i = 0; i < 8; i++) {
-      const baseT = (i + 0.5) / 8;
+    for (let i = 0; i < 6; i++) {
+      const baseT = (i + 0.5) / 6;
       const mkLight = (side) => {
         const panel = this.add.graphics().setDepth(3);
         const bulb = this.add.circle(0, 0, 1, 0xffee58).setAlpha(0.6).setDepth(4);
@@ -670,24 +685,37 @@ class GameScene extends Phaser.Scene {
       ponytail: this.add.ellipse(0, 0, 16, 24, 0x4e342e).setDepth(d + 0.25),
       bow: this.add.triangle(0, 0, -8, -5, -8, 5, 8, 0, 0xffd54f).setDepth(d + 0.4),
       shield: this.add.ellipse(0, 0, 68, 88, 0x4fc3f7, 0.16).setStrokeStyle(3, 0x81d4fa, 0.92).setDepth(d + 1).setVisible(false),
+      collectGlow: this.add.circle(0, 0, COLLECTION_RADIUS, 0xfff176, 0.08).setStrokeStyle(3, 0xfff176, 0.5).setDepth(d + 0.9),
+      bodyGlow: this.add.ellipse(0, 0, 56, 78, 0xfff176, 0.05).setDepth(d + 0.05),
       magnet: this.add.circle(0, 0, 42, 0xba68c8, 0.12).setStrokeStyle(3, 0xf3e5f5, 0.8).setDepth(d + 1).setVisible(false),
     };
   }
 
   _syncPlayer(t) {
     const x = this.pX;
-    const sy = PLAYER_ANCHOR_Y - PLAYER_VISUAL_LIFT - this.jumpH;
+    const comboEnergy = Phaser.Math.Clamp((this.combo - 1) / 4, 0, 1);
+    const sy = PLAYER_ANCHOR_Y - PLAYER_VISUAL_LIFT - this.jumpH - this.playerBounce * 11;
+    const fieldY = PLAYER_ANCHOR_Y - 42 - this.jumpH * 0.18;
     const grounded = this.jumpH < 2;
     const sliding = this.slideTimer > 0 && grounded;
-    const swing = grounded && !sliding ? Math.sin(t / 88) : 0;
+    const swing = grounded && !sliding ? Math.sin(t / 82) * (1 + comboEnergy * 0.22) : 0;
     const tilt = grounded ? 0 : Phaser.Math.Clamp(-this.jumpVel / 3000, -0.18, 0.18);
     const sFrac = Math.max(0.35, 1 - this.jumpH / 130);
-    const ps = PLAYER_DRAW_SCALE;
+    const ps = PLAYER_DRAW_SCALE * (1 + this.playerBounce * 0.035);
     const pos = (offset) => offset * ps;
     const shieldScale = ps * (1 + (this.shieldCharges > 0 ? Math.sin(t / 140) * 0.06 : 0));
+    const fieldScale = 1 + (this.beatPulse || 0) * 0.08 + this.collectPulse * 0.22 + comboEnergy * 0.06;
+    this.vis.collectGlow
+      .setPosition(x, fieldY)
+      .setScale(fieldScale)
+      .setAlpha(0.08 + (this.beatPulse || 0) * 0.07 + this.collectPulse * 0.18 + comboEnergy * 0.08);
+    this.vis.bodyGlow
+      .setPosition(x, sy + pos(3))
+      .setScale(ps * (1 + comboEnergy * 0.16 + this.collectPulse * 0.15))
+      .setAlpha(0.03 + comboEnergy * 0.1 + this.collectPulse * 0.1);
     this.vis.shield.setPosition(x, sy + pos(2)).setScale(shieldScale).setVisible(this.shieldCharges > 0);
-    this.vis.magnet.setPosition(x, sy + pos(2)).setScale(ps * (1 + Math.sin(t / 110) * 0.08)).setVisible(this.magnetTimer > 0);
-    this.shadow.setPosition(x, PLAYER_ANCHOR_Y + 4).setScale(sFrac * ps, sFrac * ps * 0.45).setAlpha(sFrac * 0.5);
+    this.vis.magnet.setPosition(x, fieldY).setScale(ps * (1 + Math.sin(t / 110) * 0.08)).setVisible(this.magnetTimer > 0);
+    this.shadow.setPosition(x, PLAYER_ANCHOR_Y + 5).setScale(sFrac * ps * 1.2, sFrac * ps * 0.55).setAlpha(sFrac * 0.58);
     this.vis.legL.setPosition(x - pos(sliding ? 17 : 9), sy + pos(sliding ? 28 : 33)).setScale(ps * (sliding ? 1.55 : 1), ps * (sliding ? 0.52 : 1 + swing * 0.45)).setRotation(sliding ? 0.35 : 0);
     this.vis.legR.setPosition(x + pos(sliding ? 15 : 9), sy + pos(sliding ? 31 : 33)).setScale(ps * (sliding ? 1.55 : 1), ps * (sliding ? 0.52 : 1 - swing * 0.45)).setRotation(sliding ? 0.35 : 0);
     this.vis.body.setPosition(x, sy + pos(sliding ? 17 : 7)).setScale(ps, ps * (sliding ? 0.62 : 1)).setRotation(sliding ? Math.PI / 2 : tilt);
@@ -701,42 +729,46 @@ class GameScene extends Phaser.Scene {
   }
 
   _buildUI() {
-    this.uiPanel = this.add.rectangle(W / 2, 38, W, 76, 0x020711, 0.62).setDepth(20);
-    this.add.rectangle(W / 2, 77, W, 2, 0x00e5ff, 0.18).setDepth(21);
+    this.uiPanel = this.add.rectangle(W / 2, 38, W, 76, 0x020711, 0.58).setDepth(20);
+    this.add.rectangle(W / 2, 77, W, 2, 0x00e5ff, 0.14).setDepth(21);
 
-    this.scoreLabel = this.add.text(W / 2, 13, 'SCORE', {
-      fontSize: '10px', fontFamily: 'Arial Black, Arial', fill: '#89dfff', letterSpacing: 2,
-    }).setOrigin(0.5).setDepth(22).setAlpha(0.82);
-    this.scoreTxt = this.add.text(W / 2, 38, '0', {
-      fontSize: '34px', fontFamily: 'Arial Black, Arial', fill: '#ffffff', stroke: '#00121f', strokeThickness: 5,
+    // Gameplay-first HUD: combo is the primary rhythm reward, score is second,
+    // coins and powerups are secondary, and technical BPM/beat data is tucked
+    // below the main readout.
+    this.comboTxt = this.add.text(W / 2, 30, 'x1.0', {
+      fontSize: '38px', fontFamily: 'Arial Black, Arial', fill: '#fff176', stroke: '#241a00', strokeThickness: 5,
     }).setOrigin(0.5).setDepth(22);
-    this.comboTxt = this.add.text(22, 37, 'x1.0', {
-      fontSize: '27px', fontFamily: 'Arial Black, Arial', fill: '#fff176', stroke: '#241a00', strokeThickness: 4,
-    }).setOrigin(0, 0.5).setDepth(22);
-    this.comboLabel = this.add.text(24, 62, 'COMBO', {
-      fontSize: '9px', fontFamily: 'Arial Black, Arial', fill: '#ffe082', letterSpacing: 1,
-    }).setOrigin(0, 0.5).setDepth(22).setAlpha(0.78);
+    this.comboLabel = this.add.text(W / 2, 62, 'COMBO', {
+      fontSize: '10px', fontFamily: 'Arial Black, Arial', fill: '#ffe082', letterSpacing: 2,
+    }).setOrigin(0.5).setDepth(22).setAlpha(0.82);
 
-    this.add.circle(W - 78, 32, 10, 0xffd700).setDepth(22);
-    this.coinTxt = this.add.text(W - 60, 32, '0', {
-      fontSize: '20px', fontFamily: 'Arial Black, Arial', fill: '#ffd700', stroke: '#1b1200', strokeThickness: 3,
-    }).setOrigin(0, 0.5).setDepth(22);
-    this.modeTxt = this.add.text(W / 2, 66, this.rhythmMode ? 'RHYTHM RUN' : 'ENDLESS RUN', {
-      fontSize: '11px', fontFamily: 'Arial Black, Arial', fill: '#b2ebff', letterSpacing: 2,
-    }).setOrigin(0.5).setDepth(22).setAlpha(0.75);
+    this.scoreLabel = this.add.text(58, 16, 'SCORE', {
+      fontSize: '9px', fontFamily: 'Arial Black, Arial', fill: '#89dfff', letterSpacing: 2,
+    }).setOrigin(0.5).setDepth(22).setAlpha(0.72);
+    this.scoreTxt = this.add.text(58, 39, '0', {
+      fontSize: '24px', fontFamily: 'Arial Black, Arial', fill: '#ffffff', stroke: '#00121f', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(22);
 
-    this.powerTxt = this.add.text(18, 96, 'MAGNET —', {
+    this.add.circle(W - 84, 32, 9, 0xffd700).setDepth(22);
+    this.coinTxt = this.add.text(W - 68, 32, '0', {
+      fontSize: '19px', fontFamily: 'Arial Black, Arial', fill: '#ffd700', stroke: '#1b1200', strokeThickness: 3,
+    }).setOrigin(0, 0.5).setDepth(22);
+    this.modeTxt = this.add.text(W / 2, 82, this.rhythmMode ? 'RHYTHM RUN' : 'ENDLESS RUN', {
+      fontSize: '10px', fontFamily: 'Arial Black, Arial', fill: '#b2ebff', letterSpacing: 2,
+    }).setOrigin(0.5).setDepth(22).setAlpha(0.56);
+
+    this.powerTxt = this.add.text(18, 100, 'MAGNET —', {
       fontSize: '11px', fontFamily: 'Arial Black, Arial', fill: '#ce93d8', stroke: '#130018', strokeThickness: 3,
     }).setOrigin(0, 0.5).setDepth(21).setAlpha(0.78);
-    this.shieldTxt = this.add.text(W - 18, 96, 'SHIELD —', {
+    this.shieldTxt = this.add.text(W - 18, 100, 'SHIELD —', {
       fontSize: '11px', fontFamily: 'Arial Black, Arial', fill: '#81d4fa', stroke: '#00121f', strokeThickness: 3,
     }).setOrigin(1, 0.5).setDepth(21).setAlpha(0.78);
 
     if (this.rhythmMode) {
-      this.beatHalo = this.add.circle(W / 2, HIT_LINE_Y, 54, 0xfff176, 0.08).setStrokeStyle(3, 0xfff176, 0.45).setDepth(16);
-      this.beatTxt = this.add.text(W / 2, 94, '128 BPM', {
-        fontSize: '12px', fontFamily: 'Arial Black, Arial', fill: '#fff176', stroke: '#000', strokeThickness: 3,
-      }).setOrigin(0.5).setDepth(21).setAlpha(0.78);
+      this.beatHalo = this.add.circle(W / 2, PLAYER_ANCHOR_Y - 42, COLLECTION_RADIUS, 0xfff176, 0.08).setStrokeStyle(3, 0xfff176, 0.45).setDepth(16);
+      this.beatTxt = this.add.text(W / 2, 112, '128 BPM', {
+        fontSize: '10px', fontFamily: 'Arial Black, Arial', fill: '#fff176', stroke: '#000', strokeThickness: 3,
+      }).setOrigin(0.5).setDepth(21).setAlpha(0.58);
     }
 
     this.pauseBtn = this.add.rectangle(W - 28, 32, 34, 34, 0x17212f, 0.94).setInteractive({ useHandCursor: true }).setDepth(22);
@@ -881,7 +913,7 @@ class GameScene extends Phaser.Scene {
       this.lastBeatPulse = currentBeat;
       this.beatPulse = 1;
       if (this.beatHalo) {
-        this.beatHalo.setScale(1.8).setAlpha(0.18);
+        this.beatHalo.setPosition(this.pX, PLAYER_ANCHOR_Y - 42).setScale(1.35).setAlpha(0.18);
         this.tweens.add({ targets: this.beatHalo, scale: 1, alpha: 0.08, duration: RHYTHM_BEAT_MS * 0.75, ease: 'Sine.easeOut' });
       }
     }
@@ -966,9 +998,10 @@ class GameScene extends Phaser.Scene {
     const count = Phaser.Math.Between(3, 5);
     for (let i = 0; i < count; i++) {
       const trailLane = Phaser.Math.Clamp(lane + (i > count / 2 ? laneDrift : 0), 0, 2);
+      const ring = this.add.circle(0, 0, 1, 0xfff176, 0.1).setStrokeStyle(2, 0xfff176, 0.55).setDepth(5);
       const coin = this.add.circle(0, 0, 1, 0xffd700).setDepth(6);
       const shine = this.add.circle(0, 0, 1, 0xfff59d, 0.72).setDepth(7);
-      this.gameObjs.push({ type: 'coin', lane: trailLane, worldY: APPROACH_START_Y - i * 58, worldW: 49, worldH: 49, parts: [coin, shine], coin, shine, checked: false });
+      this.gameObjs.push({ type: 'coin', lane: trailLane, worldY: APPROACH_START_Y - i * 58, worldW: 49, worldH: 49, parts: [ring, coin, shine], ring, coin, shine, checked: false });
     }
   }
 
@@ -1120,6 +1153,7 @@ class GameScene extends Phaser.Scene {
       this.shieldCharges = 1;
       this._updateShieldUI();
       this._addScore(SHIELD_SCORE, 'Shield ready');
+      this._collectionFeedback(obj.ring.x || this.pX, obj.ring.y || (PLAYER_ANCHOR_Y - 42), 0x4fc3f7);
       audio.powerUp();
       return;
     }
@@ -1130,6 +1164,7 @@ class GameScene extends Phaser.Scene {
       this.magnetTimer = MAGNET_DURATION;
       this._updatePowerUI();
       this._addScore(MAGNET_SCORE, 'Magnet on');
+      this._collectionFeedback(obj.ring.x || this.pX, obj.ring.y || (PLAYER_ANCHOR_Y - 42), 0xba68c8);
       audio.powerUp();
       return;
     }
@@ -1174,6 +1209,7 @@ class GameScene extends Phaser.Scene {
             c.collected = true;
             this.coinCount++;
             this._coinPop(c.obj.x, c.obj.y);
+            this._collectionFeedback(c.obj.x, c.obj.y, 0xffd700);
             c.obj.setVisible(false);
             c.shine.setVisible(false);
           }
@@ -1207,6 +1243,7 @@ class GameScene extends Phaser.Scene {
     this._addScore(Math.round((COIN_SCORE + rhythmBonus) * this.combo), label || rhythmLabel || (this.combo >= 2 ? `Streak x${this.combo.toFixed(1)}` : null));
     this.coinTxt.setText(this.coinCount);
     this._coinPop(obj.coin.x, obj.coin.y);
+    this._collectionFeedback(obj.coin.x, obj.coin.y, obj.hitTime ? 0xfff176 : 0xffd700);
     audio.coin();
   }
 
@@ -1241,6 +1278,26 @@ class GameScene extends Phaser.Scene {
   _toast(label, x, y) {
     const t = this.add.text(x, y, label, { fontSize: '15px', fontFamily: 'Arial Black, Arial', fill: '#b7ffb7', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5).setDepth(22);
     this.tweens.add({ targets: t, y: y - 28, alpha: 0, duration: 520, ease: 'Power2', onComplete: () => t.destroy() });
+  }
+
+  _collectionFeedback(x, y, color = 0xfff176) {
+    this.collectPulse = 1;
+    this.playerBounce = Math.min(1, 0.55 + Phaser.Math.Clamp((this.combo - 1) / 4, 0, 1) * 0.45);
+    const comboEnergy = Phaser.Math.Clamp((this.combo - 1) / 4, 0, 1);
+    const fieldY = PLAYER_ANCHOR_Y - 42;
+    const ring = this.add.circle(this.pX, fieldY, COLLECTION_RADIUS * 0.62, color, 0.08)
+      .setStrokeStyle(3 + comboEnergy * 3, color, 0.82)
+      .setDepth(21);
+    this.tweens.add({
+      targets: ring,
+      radius: COLLECTION_RADIUS * (1.22 + comboEnergy * 0.3),
+      alpha: 0,
+      duration: 360,
+      ease: 'Sine.easeOut',
+      onComplete: () => ring.destroy(),
+    });
+    const beam = this.add.line(0, 0, x, y, this.pX, fieldY, color, 0.42).setOrigin(0, 0).setLineWidth(3).setDepth(20);
+    this.tweens.add({ targets: beam, alpha: 0, duration: 180, ease: 'Quad.easeOut', onComplete: () => beam.destroy() });
   }
 
   _coinPop(x, y) {
@@ -1310,6 +1367,8 @@ class GameScene extends Phaser.Scene {
     const dt = delta / 1000;
     this.runTime += delta;
     this.beatPulse = Math.max(0, this.beatPulse - dt * (this.rhythmMode ? 4.4 : 2.2));
+    this.collectPulse = Math.max(0, this.collectPulse - dt * 5.8);
+    this.playerBounce = Math.max(0, this.playerBounce - dt * 6.5);
     this.distance += this.speed * dt;
     this.speed = Math.min(MAX_SPEED, BASE_SPEED + this.runTime * 0.0017 + this.distance * 0.01);
     this.level = 1 + Math.floor(this.distance / 950);
@@ -1327,7 +1386,8 @@ class GameScene extends Phaser.Scene {
     this._updateTrackMarks(dt);
     this._redrawTrack();
     this._redrawHitLine();
-    if (this.lightPulse) this.lightPulse.setAlpha((this.beatPulse || 0) * 0.045);
+    if (this.lightPulse) this.lightPulse.setAlpha((this.beatPulse || 0) * 0.045 + this.collectPulse * 0.035);
+    if (this.beatHalo) this.beatHalo.setPosition(this.pX, PLAYER_ANCHOR_Y - 42);
 
     if (Phaser.Input.Keyboard.JustDown(this.cursors.up) || Phaser.Input.Keyboard.JustDown(this.wKey) || Phaser.Input.Keyboard.JustDown(this.spaceKey)) this._jump();
     if (Phaser.Input.Keyboard.JustDown(this.cursors.down) || Phaser.Input.Keyboard.JustDown(this.sKey)) this._slide();
@@ -1357,9 +1417,12 @@ class GameScene extends Phaser.Scene {
         continue;
       }
       this._renderObj(obj);
+      const collectable = obj.type === 'coin' || obj.type === 'shield' || obj.type === 'magnet';
       const canCollide = obj.type === 'wagon'
         ? obj.worldY >= NEAR_Y - WAGON_LANDING_GRACE && obj.worldY <= NEAR_Y + obj.worldL
-        : obj.worldY >= NEAR_Y - 18 && obj.worldY <= NEAR_Y + 18;
+        : collectable
+          ? obj.worldY >= COLLECTION_Y - 22 && obj.worldY <= COLLECTION_Y + 20
+          : obj.worldY >= NEAR_Y - 18 && obj.worldY <= NEAR_Y + 18;
       if (canCollide) this._handleCollision(obj);
     }
 
