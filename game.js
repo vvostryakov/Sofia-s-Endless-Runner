@@ -63,6 +63,10 @@ const setAudioMuted = (muted) => {
   if (window.audio && typeof audio.setMuted === 'function') audio.setMuted(muted);
 };
 const bestSummary = () => `Best: ${loadNumber(STORAGE_KEYS.bestScore)} · Coins: ${loadNumber(STORAGE_KEYS.bestCoins)}`;
+const appVersionLabel = () => {
+  const version = window.APP_VERSION || {};
+  return `Version: ${version.label || version.commit || 'local-dev'}`;
+};
 
 // ─── Boot / menu scene ────────────────────────────────────────────────────────
 class BootScene extends Phaser.Scene {
@@ -135,6 +139,9 @@ class BootScene extends Phaser.Scene {
     this._button(cx, cy + 108, 220, 48, 'RHYTHM RUN', () => this._startRun(true), 0x8e24aa);
     this._button(cx, cy + 164, 220, 40, 'HOW TO PLAY', () => this._showHowTo(), 0x3949ab);
     this._button(cx, cy + 214, 220, 36, this.muted ? 'SOUND: OFF' : 'SOUND: ON', () => this._toggleSound(), 0x455a64);
+    this.panel.add(this.add.text(cx, H - 24, appVersionLabel(), {
+      fontSize: '12px', fontFamily: 'Arial', fill: '#8fa7c7',
+    }).setOrigin(0.5));
 
   }
 
