@@ -42,7 +42,12 @@ class BootScene extends Phaser.Scene {
       fontSize: '28px', fontFamily: 'Arial Black, Arial', fill: '#fff'
     }).setOrigin(0.5);
 
-    const go = () => this.scene.start('Game');
+    // Start menu music on first interaction (browser requires user gesture)
+    const startMusic = () => audio.playMenu();
+    this.input.once('pointerdown', startMusic);
+    this.input.keyboard.once('keydown', startMusic);
+
+    const go = () => { audio.stop(); this.scene.start('Game'); };
     btn.on('pointerdown', go);
     this.input.keyboard.once('keydown-SPACE', go);
     this.input.keyboard.once('keydown-ENTER', go);
@@ -74,6 +79,8 @@ class GameScene extends Phaser.Scene {
     this._buildPlayer();
     this._buildUI();
     this._buildControls();
+
+    audio.playGame();
 
     this.time.addEvent({
       delay: 4000,
@@ -169,6 +176,8 @@ class GameScene extends Phaser.Scene {
     this.lane = next;
     this.canSwitch = false;
 
+    audio.switchLane();
+
     const tx = LANE_X[this.lane];
     this.tweens.add({
       targets: this.hitbox, x: tx, duration: 130, ease: 'Power2',
@@ -219,6 +228,7 @@ class GameScene extends Phaser.Scene {
     if (!this.alive) return;
     this.alive = false;
     this.physics.pause();
+    audio.gameOver();
 
     const flash = this.add.rectangle(W / 2, H / 2, W, H, 0xff0000, 0.3).setDepth(20);
     this.time.delayedCall(200, () => flash.destroy());
@@ -241,7 +251,7 @@ class GameScene extends Phaser.Scene {
       fontSize: '22px', fontFamily: 'Arial Black, Arial', fill: '#fff'
     }).setOrigin(0.5).setDepth(22);
 
-    const restart = () => this.scene.restart();
+    const restart = () => { audio.playGame(); this.scene.restart(); };
     btn.on('pointerdown', restart);
     this.time.delayedCall(400, () => this.input.keyboard.once('keydown', restart));
   }
@@ -299,6 +309,7 @@ class GameScene extends Phaser.Scene {
       if (Math.sqrt(dx * dx + dy * dy) < 36) {
         this.coins++;
         this.coinTxt.setText(this.coins);
+        audio.coin();
         this._coinPop(coin.x, coin.y);
         coin.destroy(); this.coinPool.splice(i, 1);
       }
