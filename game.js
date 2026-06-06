@@ -4,24 +4,28 @@
 const W = 400, H = 700;
 
 // ─── Perspective ──────────────────────────────────────────────────────────────
-const VP_X         = 200;   // centre x
-const HORIZON_Y    = 172;   // y of the horizon LINE (not a point)
-const NEAR_Y       = 592;   // ground y at player level
-const TRACK_FAR_HW  = 115;  // track half-width AT the horizon — wide so it doesn't look like a point
-const TRACK_NEAR_HW = 185;  // track half-width at player level
+//
+//  Subway-Surfers camera model:
+//    • Horizon LINE sits about 37 % down the screen (not a single point)
+//    • Track is wide even at the horizon — gentle convergence, not a cone
+//    • Objects scale from ~12 % at the horizon to 100 % at the player
+//
+const VP_X          = 200;   // horizontal centre
+const HORIZON_Y     = 252;   // y of the horizon line  (~37 % of 700)
+const NEAR_Y        = 635;   // ground y at player level (~91 % of 700)
+const TRACK_FAR_HW  = 120;   // track half-width AT the horizon  → 240 px visible
+const TRACK_NEAR_HW = 185;   // track half-width at player level → 370 px visible
 
-// Lane centre x at horizon and at player — lerped for any depth
-const LANE_FAR_X  = [-0.63, 0, 0.63].map(f => Math.round(VP_X + f * TRACK_FAR_HW));
-const LANE_NEAR_X = [-0.63, 0, 0.63].map(f => Math.round(VP_X + f * TRACK_NEAR_HW));
-// keep LANE_NX alias so existing player-position references still work
-const LANE_NX = LANE_NEAR_X;
+// Lane centre-x at each end  (2/3 of track half-width from centre)
+const LANE_FAR_X  = [-1, 0, 1].map(s => Math.round(VP_X + s * TRACK_FAR_HW  * 0.667));
+const LANE_NEAR_X = [-1, 0, 1].map(s => Math.round(VP_X + s * TRACK_NEAR_HW * 0.667));
+const LANE_NX     = LANE_NEAR_X;   // alias used by player code
 
 // Perspective helpers
-const pT  = y       => Math.max(0, (y - HORIZON_Y) / (NEAR_Y - HORIZON_Y));
-const pSc = y       => 0.06 + pT(y) * 0.94;
-// lX lerps from the horizon spread to the near spread — NO single vanishing point
-const lX  = (l, y)  => LANE_FAR_X[l] + pT(y) * (LANE_NEAR_X[l] - LANE_FAR_X[l]);
-const eY  = (y, h)  => y - h * pSc(y);  // screen-y when elevated by h world-units
+const pT  = y      => Math.max(0, (y - HORIZON_Y) / (NEAR_Y - HORIZON_Y));
+const pSc = y      => 0.12 + pT(y) * 0.88;          // 12 % at horizon → 100 % at near
+const lX  = (l, y) => LANE_FAR_X[l] + pT(y) * (LANE_NEAR_X[l] - LANE_FAR_X[l]);
+const eY  = (y, h) => y - h * pSc(y);               // screen-y when elevated by h
 
 // ─── Jump physics ─────────────────────────────────────────────────────────────
 const JUMP_INIT = 460;    // initial upward velocity  (+up, −down)
@@ -245,10 +249,10 @@ class GameScene extends Phaser.Scene {
       const baseT = (i + 0.5) / 6;
       const worldY = HORIZON_Y + baseT * (NEAR_Y - HORIZON_Y);
       const sc     = pSc(worldY);
-      const inset  = TRACK_NEAR_HW * 1.12;
 
       const mkPost = (side) => {
-        const sx = VP_X + side * (VP_X + pT(worldY) * (inset - 0));
+        const trackHW = TRACK_FAR_HW + pT(worldY) * (TRACK_NEAR_HW - TRACK_FAR_HW);
+        const sx = VP_X + side * (trackHW + 22 * sc);
         const postH  = Math.round(65 * sc);
         const post   = this.add.rectangle(sx, worldY - postH / 2, Math.round(5 * sc), postH, 0x607d8b)
           .setDepth(3);
@@ -271,8 +275,8 @@ class GameScene extends Phaser.Scene {
       const t       = s.baseT;
       const worldY  = HORIZON_Y + t * (NEAR_Y - HORIZON_Y);
       const sc      = pSc(worldY);
-      const inset   = TRACK_NEAR_HW + 18;
-      const sx      = VP_X + s.side * pT(worldY) * inset;
+      const trackHW = TRACK_FAR_HW + t * (TRACK_NEAR_HW - TRACK_FAR_HW);
+      const sx      = VP_X + s.side * (trackHW + 22 * sc);
       const postH   = Math.round(65 * sc);
 
       s.post.setPosition(sx, worldY - postH / 2)
@@ -659,6 +663,7 @@ class GameScene extends Phaser.Scene {
 const config = {
   type: Phaser.AUTO,
   backgroundColor: '#060c18',
+  input: { activePointers: 3 },
   physics: { default: 'arcade', arcade: { gravity: { y: 0 }, debug: false } },
   scene: [BootScene, GameScene],
   scale: {
