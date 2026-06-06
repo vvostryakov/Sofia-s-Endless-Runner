@@ -209,6 +209,30 @@ class AudioManager {
     osc.stop(t + 0.1);
   }
 
+  powerUp() {
+    this._init();
+    const t = this._ctx.currentTime;
+    [72, 76, 79, 84].forEach((n, i) => {
+      this._note(n, t + i * 0.045, 0.13, 0.18, 'triangle', 'sfx');
+    });
+  }
+
+  shieldBreak() {
+    this._init();
+    const ctx = this._ctx, t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(760, t);
+    osc.frequency.exponentialRampToValueAtTime(170, t + 0.16);
+    gain.gain.setValueAtTime(0.24, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+    osc.connect(gain);
+    gain.connect(this._sfxGain);
+    osc.start(t);
+    osc.stop(t + 0.22);
+  }
+
   gameOver() {
     this._init();
     this.stop();

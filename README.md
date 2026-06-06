@@ -10,7 +10,7 @@ Once GitHub Pages is enabled, play at:
 ## MVP flow
 
 - Main menu with best score, best coin run, sound toggle, and how-to-play screen.
-- Endless run with three lanes, jump physics, obstacles, wagons, score, coins, combo rewards, speed scaling, and safe early spawn timing.
+- Endless run with three lanes, jump physics, obstacles, wagons, score, coins, combo rewards, one-hit shield pickups, speed scaling, and safe early spawn timing.
 - Pause/resume screen for keyboard and mobile.
 - Game-over screen with reason, score, coins, persisted records, replay, and main-menu actions.
 
