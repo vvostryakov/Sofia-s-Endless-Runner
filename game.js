@@ -28,6 +28,7 @@ const MAX_SPEED = 560;
 const TOUCH_THRESHOLD = 22;
 const SCORE_PER_SECOND = 15;
 const COIN_SCORE = 20;
+const SHIELD_SCORE = 50;
 const SAFE_START_MS = 1300;
 const STORAGE_KEYS = {
   bestScore: 'ser_best_score_v1',
@@ -106,7 +107,7 @@ class BootScene extends Phaser.Scene {
     this.panel.add(this.add.text(cx, cy - 58, bestSummary(), {
       fontSize: '18px', fontFamily: 'Arial', fill: '#b7e4ff',
     }).setOrigin(0.5));
-    this.panel.add(this.add.text(cx, cy - 12, 'Three lanes. Dodge obstacles. Jump onto wagons for coins.', {
+    this.panel.add(this.add.text(cx, cy - 12, 'Three lanes. Dodge obstacles. Grab shields. Jump onto wagons for coins.', {
       fontSize: '15px', fontFamily: 'Arial', fill: '#d4e3ff', align: 'center', wordWrap: { width: 330 },
     }).setOrigin(0.5));
 
@@ -133,7 +134,7 @@ class BootScene extends Phaser.Scene {
       'Swipe left/right to switch lanes.\n' +
       'Swipe up to jump. Tap the pause button when you need a break.\n\n' +
       'Goal\n' +
-      'Survive as long as possible. Obstacles end the run unless you clear them. Wagons are safe only if you land on top.', {
+      'Survive as long as possible. Obstacles end the run unless you clear them. Blue shields block one crash. Wagons are safe only if you land on top.', {
       fontSize: '16px', fontFamily: 'Arial', fill: '#ffffff', align: 'center',
       lineSpacing: 8, wordWrap: { width: 310 },
     }).setOrigin(0.5));
@@ -183,6 +184,7 @@ class GameScene extends Phaser.Scene {
     this.runTime = 0;
     this.spawnCursor = 0;
     this.combo = 1;
+    this.shieldCharges = 0;
 
     this.pLane = 1;
     this.pX = LANE_NX[1];
@@ -329,6 +331,7 @@ class GameScene extends Phaser.Scene {
       hair: this.add.rectangle(0, 0, 33, 10, 0x5d4037).setDepth(d),
       eyeL: this.add.circle(0, 0, 3, 0x1a1a2e).setDepth(d),
       eyeR: this.add.circle(0, 0, 3, 0x1a1a2e).setDepth(d),
+      shield: this.add.ellipse(0, 0, 68, 88, 0x4fc3f7, 0.16).setStrokeStyle(3, 0x81d4fa, 0.92).setDepth(d + 1).setVisible(false),
     };
   }
 
@@ -339,6 +342,8 @@ class GameScene extends Phaser.Scene {
     const swing = grounded ? Math.sin(t / 88) : 0;
     const tilt = grounded ? 0 : Phaser.Math.Clamp(-this.jumpVel / 3000, -0.18, 0.18);
     const sFrac = Math.max(0.35, 1 - this.jumpH / 130);
+    const shieldScale = 1 + (this.shieldCharges > 0 ? Math.sin(t / 140) * 0.06 : 0);
+    this.vis.shield.setPosition(x, sy + 2).setScale(shieldScale).setVisible(this.shieldCharges > 0);
     this.shadow.setPosition(x, NEAR_Y + 4).setScale(sFrac, sFrac * 0.45).setAlpha(sFrac * 0.5);
     this.vis.legL.setPosition(x - 9, sy + 31).setScale(1, 1 + swing * 0.45);
     this.vis.legR.setPosition(x + 9, sy + 31).setScale(1, 1 - swing * 0.45);
@@ -354,9 +359,10 @@ class GameScene extends Phaser.Scene {
   _buildUI() {
     this.add.rectangle(W / 2, 28, W, 56, 0x000000, 0.58).setDepth(20);
     this.scoreTxt = this.add.text(W / 2, 20, 'Score: 0', { fontSize: '18px', fontFamily: 'Arial', fill: '#fff' }).setOrigin(0.5).setDepth(21);
-    this.goalTxt = this.add.text(W / 2, 44, 'Survive · collect wagon coins', { fontSize: '12px', fontFamily: 'Arial', fill: '#9ecbff' }).setOrigin(0.5).setDepth(21);
+    this.goalTxt = this.add.text(W / 2, 44, 'Survive · shields block one crash', { fontSize: '12px', fontFamily: 'Arial', fill: '#9ecbff' }).setOrigin(0.5).setDepth(21);
     this.add.circle(24, 28, 11, 0xffd700).setDepth(20);
     this.coinTxt = this.add.text(42, 28, '0', { fontSize: '20px', fontFamily: 'Arial', fill: '#ffd700' }).setOrigin(0, 0.5).setDepth(21);
+    this.shieldTxt = this.add.text(W - 66, 52, 'Shield: -', { fontSize: '12px', fontFamily: 'Arial Black, Arial', fill: '#81d4fa' }).setOrigin(0.5).setDepth(21);
     this.pauseBtn = this.add.rectangle(W - 30, 28, 42, 34, 0x263238, 0.95).setInteractive({ useHandCursor: true }).setDepth(21);
     this.add.text(W - 30, 28, 'II', { fontSize: '18px', fontFamily: 'Arial Black, Arial', fill: '#fff' }).setOrigin(0.5).setDepth(22);
     this.pauseBtn.on('pointerdown', () => this._togglePause());
@@ -459,7 +465,8 @@ class GameScene extends Phaser.Scene {
     if (this.runTime < SAFE_START_MS) return;
 
     const roll = Math.random();
-    if (roll < 0.18 + difficulty * 0.13) this._spawnWagon(this.time.now);
+    if (roll < 0.08 + difficulty * 0.03) this._spawnShield();
+    else if (roll < 0.25 + difficulty * 0.13) this._spawnWagon();
     else this._spawnObstacle(this.time.now, difficulty);
     this._scheduleNextSpawn();
   }
@@ -476,6 +483,14 @@ class GameScene extends Phaser.Scene {
       const side = this.add.rectangle(0, 0, 1, 1, Phaser.Display.Color.IntegerToColor(color).darken(20).color32).setDepth(5);
       this.gameObjs.push({ type: 'obstacle', lane, worldY: HORIZON_Y + 6, worldH: h, worldW: w, parts: [face, top, side], face, top, side, checked: false });
     }
+  }
+
+  _spawnShield() {
+    const lane = Phaser.Math.Between(0, 2);
+    const ring = this.add.circle(0, 0, 1, 0x4fc3f7, 0.18).setStrokeStyle(2, 0xb3e5fc, 0.95).setDepth(6);
+    const core = this.add.circle(0, 0, 1, 0x81d4fa, 0.9).setDepth(6);
+    const glint = this.add.circle(0, 0, 1, 0xffffff, 0.75).setDepth(7);
+    this.gameObjs.push({ type: 'shield', lane, worldY: HORIZON_Y + 6, worldW: 44, worldH: 44, parts: [ring, core, glint], ring, core, glint, checked: false });
   }
 
   _spawnWagon() {
@@ -516,6 +531,15 @@ class GameScene extends Phaser.Scene {
       obj.side.setPosition(x + sw / 2 + sdw / 2, fy).setSize(sdw, sh).setDepth(dp);
     }
 
+    if (obj.type === 'shield') {
+      const pulse = 1 + Math.sin(this.time.now / 130) * 0.08;
+      const r = Math.max(3, 18 * sc * pulse);
+      const cy = eY(y, 48);
+      obj.ring.setPosition(x, cy).setRadius(r).setDepth(dp + 1);
+      obj.core.setPosition(x, cy).setRadius(Math.max(2, r * 0.58)).setDepth(dp + 2);
+      obj.glint.setPosition(x - r * 0.26, cy - r * 0.32).setRadius(Math.max(1, r * 0.2)).setDepth(dp + 3);
+    }
+
     if (obj.type === 'wagon') {
       const sw = obj.worldW * sc;
       const sh = obj.worldH * sc;
@@ -541,10 +565,21 @@ class GameScene extends Phaser.Scene {
 
   _handleCollision(obj) {
     if (obj.checked || obj.lane !== this.pLane) return;
+    if (obj.type === 'shield') {
+      obj.checked = true;
+      obj.consumed = true;
+      this.shieldCharges = 1;
+      this._updateShieldUI();
+      this._addScore(SHIELD_SCORE, 'Shield ready');
+      audio.powerUp();
+      return;
+    }
     if (obj.type === 'obstacle') {
       obj.checked = true;
-      if (this.jumpH < obj.worldH - 8) this._gameOver('Hit an obstacle');
-      else this._addScore(5, 'Clear');
+      if (this.jumpH < obj.worldH - 8) {
+        if (this._consumeShield('Shield blocked it')) obj.consumed = true;
+        else this._gameOver('Hit an obstacle');
+      } else this._addScore(5, 'Clear');
     }
 
     if (obj.type === 'wagon') {
@@ -570,9 +605,27 @@ class GameScene extends Phaser.Scene {
         audio.land();
       } else if (this.jumpH < WAGON_TOP - 8) {
         obj.checked = true;
-        this._gameOver('Hit a wagon');
+        if (this._consumeShield('Shield blocked it')) obj.consumed = true;
+        else this._gameOver('Hit a wagon');
       }
     }
+  }
+
+  _updateShieldUI() {
+    this.shieldTxt.setText(this.shieldCharges > 0 ? 'Shield: ON' : 'Shield: -');
+  }
+
+  _consumeShield(label) {
+    if (this.shieldCharges <= 0) return false;
+    this.shieldCharges = 0;
+    this._updateShieldUI();
+    this.rideTimer = 0;
+    this.jumpVel = Math.max(this.jumpVel, 120);
+    this._toast(label, W / 2, 118);
+    const flash = this.add.rectangle(W / 2, H / 2, W, H, 0x4fc3f7, 0.24).setDepth(24);
+    this.time.delayedCall(140, () => flash.destroy());
+    audio.shieldBreak();
+    return true;
   }
 
   _addScore(points, label) {
@@ -657,7 +710,7 @@ class GameScene extends Phaser.Scene {
     for (let i = this.gameObjs.length - 1; i >= 0; i--) {
       const obj = this.gameObjs[i];
       obj.worldY += this.speed * dt;
-      if (obj.worldY > NEAR_Y + 80) {
+      if (obj.consumed || obj.worldY > NEAR_Y + 80) {
         obj.parts.forEach(p => p.destroy());
         this.gameObjs.splice(i, 1);
         continue;
