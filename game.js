@@ -26,23 +26,18 @@ const HIT_LINE_Y    = 586;
 const NEAR_Y        = HIT_LINE_Y + 34;
 const COLLECTION_Y  = NEAR_Y - 6;
 const COLLECTION_RADIUS = 58;
-const HORIZON_Y     = 326;
-const CAMERA_LOOK_Y = HORIZON_Y - 42;
-const VP_Y          = CAMERA_LOOK_Y;
+const HORIZON_Y     = 210;
 const ROAD_END_Y    = NEAR_Y;
-const TRACK_FAR_HW  = 16;
-const TRACK_NEAR_HW = 352;
-const TUNNEL_NEAR_RX = 360;
-const TUNNEL_NEAR_RY = 286;
+const TRACK_FAR_HW  = 5;
+const TRACK_NEAR_HW = 120;
 const PLAYER_ANCHOR_Y = NEAR_Y + 20;
 const PLAYER_DRAW_SCALE = 1.06;
 const PLAYER_VISUAL_LIFT = 10;
 
 const pT  = y      => Phaser.Math.Clamp((y - HORIZON_Y) / (NEAR_Y - HORIZON_Y), 0, 1);
-const pEase = y    => Math.pow(pT(y), 1.34);
-const pSc = y      => 0.074 + pEase(y) * 1.58;
-const projectY = y => VP_Y + Math.pow(pT(y), 1.03) * (NEAR_Y - VP_Y);
-const eY  = (y, h) => projectY(y) - h * pSc(y);
+const pSc = y      => 0.12 + Math.pow(pT(y), 0.85) * 0.88;
+const projectY = y => y;
+const eY  = (y, h) => y - h * pSc(y);
 
 // ─── MVP tuning ───────────────────────────────────────────────────────────────
 const JUMP_INIT = 465;
@@ -52,7 +47,7 @@ const WAGON_LENGTH = 185;
 const WAGON_LANDING_GRACE = 26;
 const WAGON_RIDE_MIN_MS = 1150;
 const WAGON_RIDE_MAX_MS = 2200;
-const APPROACH_START_Y = HORIZON_Y + 1;
+const APPROACH_START_Y = 327;
 const BASE_SPEED = 145;
 const MAX_SPEED = 430;
 const TOUCH_THRESHOLD = 22;
@@ -317,9 +312,8 @@ class GameScene extends Phaser.Scene {
   _regW(gfx) { this._worldGfx.push(gfx); return gfx; }
 
   _buildWorldBackdrop(w) {
-    // Sky behind tunnel
-    const g = this._regW(this.add.graphics().setDepth(-1));
-    const mid = VP_Y * 0.55;
+    const g = this._regW(this.add.graphics().setDepth(0));
+    const mid = HORIZON_Y * 0.55;
     g.fillGradientStyle(w.sky[0],w.sky[0],w.sky[1],w.sky[1],1);
     g.fillRect(0,0,W,mid);
     g.fillGradientStyle(w.sky[1],w.sky[1],w.sky[2],w.sky[2],1);
@@ -332,28 +326,28 @@ class GameScene extends Phaser.Scene {
   }
 
   _bdJungle(g,w) {
-    for(let i=0;i<38;i++){ g.fillStyle(0xffffff,0.15+Math.random()*0.65); g.fillRect(Math.random()*W,Math.random()*(VP_Y-10),1,1); }
+    for(let i=0;i<38;i++){ g.fillStyle(0xffffff,0.15+Math.random()*0.65); g.fillRect(Math.random()*W,Math.random()*(HORIZON_Y-10),1,1); }
     g.fillStyle(0xeaf6ff,0.9); g.fillCircle(310,52,27);
     g.fillStyle(w.sky[0],0.7); g.fillCircle(300,46,22);
-    g.fillStyle(0x0c2016,0.6); for(let i=0;i<9;i++) g.fillEllipse(i*50+14,VP_Y-4,56,(28+i%3*12)*2);
+    g.fillStyle(0x0c2016,0.6); for(let i=0;i<9;i++) g.fillEllipse(i*50+14,HORIZON_Y-4,56,(28+i%3*12)*2);
     g.fillStyle(0x0c2a22,0.9);
-    g.fillPoints([{x:56,y:VP_Y},{x:56,y:VP_Y-46},{x:68,y:VP_Y-46},{x:68,y:VP_Y-62},{x:86,y:VP_Y-62},{x:86,y:VP_Y-46},{x:98,y:VP_Y-46},{x:98,y:VP_Y}],true);
+    g.fillPoints([{x:56,y:HORIZON_Y},{x:56,y:HORIZON_Y-46},{x:68,y:HORIZON_Y-46},{x:68,y:HORIZON_Y-62},{x:86,y:HORIZON_Y-62},{x:86,y:HORIZON_Y-46},{x:98,y:HORIZON_Y-46},{x:98,y:HORIZON_Y}],true);
     g.fillStyle(0x0a1c14,1); for(let i=0;i<14;i++) g.fillEllipse(i*30+14,-4,36,(18+i%3*10)*2);
     g.lineStyle(2,w.accent,0.12); for(let i=0;i<7;i++) g.strokeCircle(i*60+14,0,22+i%2*10);
-    g.fillStyle(0x0c2018,0.92); for(let i=0;i<17;i++) g.fillEllipse(i*26+13,VP_Y-((22+i*17%24)*0.5)+2,26,(22+i*17%24)*2);
+    g.fillStyle(0x0c2018,0.92); for(let i=0;i<17;i++) g.fillEllipse(i*26+13,HORIZON_Y-((22+i*17%24)*0.5)+2,26,(22+i*17%24)*2);
     g.fillStyle(w.accent,0.5); for(let i=0;i<12;i++) g.fillCircle(30+i*28+(i%3)*12,40+i*12+(i%4)*8,1.5);
   }
 
   _bdSavanna(g,w) {
-    g.fillStyle(0xffe6a0,1); g.fillCircle(W/2,VP_Y*0.42,52);
-    g.fillStyle(0xff9a4d,0.85); g.fillCircle(W/2,VP_Y*0.42,40);
-    g.lineStyle(3,0xff9a4d,0.1); g.strokeCircle(W/2,VP_Y*0.42,72);
-    g.fillStyle(0x3a1f3e,0.7); g.fillEllipse(W/2,VP_Y+5,340,78);
-    [[58,VP_Y-28,5,26],[292,VP_Y-24,5,22],[162,VP_Y-16,4,18]].forEach(([ax,ay,tw,th])=>{
+    g.fillStyle(0xffe6a0,1); g.fillCircle(W/2,HORIZON_Y*0.42,52);
+    g.fillStyle(0xff9a4d,0.85); g.fillCircle(W/2,HORIZON_Y*0.42,40);
+    g.lineStyle(3,0xff9a4d,0.1); g.strokeCircle(W/2,HORIZON_Y*0.42,72);
+    g.fillStyle(0x3a1f3e,0.7); g.fillEllipse(W/2,HORIZON_Y+5,340,78);
+    [[58,HORIZON_Y-28,5,26],[292,HORIZON_Y-24,5,22],[162,HORIZON_Y-16,4,18]].forEach(([ax,ay,tw,th])=>{
       g.fillStyle(0x120c1c,1); g.fillRect(ax-tw/2,ay,tw,th); g.fillEllipse(ax,ay-5,48,11);
     });
     [[0.23,0.18],[0.31,0.23],[0.69,0.16]].forEach(([bx,by])=>{
-      g.lineStyle(2,0x1a102088,0.6); const px=bx*W,py=by*VP_Y;
+      g.lineStyle(2,0x1a102088,0.6); const px=bx*W,py=by*HORIZON_Y;
       g.beginPath(); g.moveTo(px-7,py); g.lineTo(px,py-4); g.lineTo(px+7,py); g.strokePath();
     });
   }
@@ -362,16 +356,16 @@ class GameScene extends Phaser.Scene {
     g.fillStyle(0xbfebff,0.5); g.fillRect(0,0,W,6);
     g.lineStyle(2,0x7df0ff,0.5); for(let i=0;i<20;i++){ g.beginPath(); g.moveTo(i*22,3); g.lineTo(i*22+(10+(i*7)%12),3); g.strokePath(); }
     const rots=[-12,-4,5,14,24];
-    for(let i=0;i<5;i++){ g.fillStyle(0x2be0ff,0.05); const cx=40+i*70,r=rots[i]*Math.PI/180; g.beginPath(); g.moveTo(cx,0); g.lineTo(cx+Math.sin(r)*VP_Y*1.6+10,VP_Y*1.6); g.lineTo(cx+Math.sin(r)*VP_Y*1.6+50,VP_Y*1.6); g.lineTo(cx+40,0); g.closePath(); g.fillPath(); }
-    g.fillStyle(0x0a2e4c,0.72); for(let i=0;i<9;i++) g.fillEllipse(i*46+4+16,VP_Y+1,32,(12+(i%3)*14)*2);
-    g.fillStyle(0x2be0ff,0.3); for(let i=0;i<20;i++) g.fillCircle(15+i*19+(i%4)*11,10+(i*23)%VP_Y,1+(i%3));
+    for(let i=0;i<5;i++){ g.fillStyle(0x2be0ff,0.05); const cx=40+i*70,r=rots[i]*Math.PI/180; g.beginPath(); g.moveTo(cx,0); g.lineTo(cx+Math.sin(r)*HORIZON_Y*1.6+10,HORIZON_Y*1.6); g.lineTo(cx+Math.sin(r)*HORIZON_Y*1.6+50,HORIZON_Y*1.6); g.lineTo(cx+40,0); g.closePath(); g.fillPath(); }
+    g.fillStyle(0x0a2e4c,0.72); for(let i=0;i<9;i++) g.fillEllipse(i*46+4+16,HORIZON_Y+1,32,(12+(i%3)*14)*2);
+    g.fillStyle(0x2be0ff,0.3); for(let i=0;i<20;i++) g.fillCircle(15+i*19+(i%4)*11,10+(i*23)%HORIZON_Y,1+(i%3));
   }
 
   _bdDeep(g,w) {
-    for(let i=0;i<44;i++){ const c=i%2===0?0xb14dff:0x2be0ff; g.fillStyle(c,0.12+0.5*(i%5)/4); g.fillCircle((i*97+13)%W,(i*53+7)%(VP_Y-10),i%5===0?2:1); }
-    [[0.22,0xb14dff],[0.54,0x2be0ff],[0.80,0xb14dff]].forEach(([bx,bc])=>{ g.fillStyle(bc,0.08); g.fillCircle(bx*W,VP_Y+5,58); });
-    for(let i=0;i<4;i++){ g.fillStyle(0xb14dff,0.04); const cx=50+i*100; g.beginPath(); g.moveTo(cx,0); g.lineTo(cx+30,VP_Y); g.lineTo(cx+52,VP_Y); g.lineTo(cx+22,0); g.closePath(); g.fillPath(); }
-    g.fillStyle(0x1c1448,0.85); for(let i=0;i<12;i++) g.fillTriangle(i*36-8+9,VP_Y-16-(i%4)*14,i*36-8,VP_Y+2,i*36-8+18,VP_Y+2);
+    for(let i=0;i<44;i++){ const c=i%2===0?0xb14dff:0x2be0ff; g.fillStyle(c,0.12+0.5*(i%5)/4); g.fillCircle((i*97+13)%W,(i*53+7)%(HORIZON_Y-10),i%5===0?2:1); }
+    [[0.22,0xb14dff],[0.54,0x2be0ff],[0.80,0xb14dff]].forEach(([bx,bc])=>{ g.fillStyle(bc,0.08); g.fillCircle(bx*W,HORIZON_Y+5,58); });
+    for(let i=0;i<4;i++){ g.fillStyle(0xb14dff,0.04); const cx=50+i*100; g.beginPath(); g.moveTo(cx,0); g.lineTo(cx+30,HORIZON_Y); g.lineTo(cx+52,HORIZON_Y); g.lineTo(cx+22,0); g.closePath(); g.fillPath(); }
+    g.fillStyle(0x1c1448,0.85); for(let i=0;i<12;i++) g.fillTriangle(i*36-8+9,HORIZON_Y-16-(i%4)*14,i*36-8,HORIZON_Y+2,i*36-8+18,HORIZON_Y+2);
   }
 
   _buildWorldScenery(w) {
@@ -391,10 +385,10 @@ class GameScene extends Phaser.Scene {
       const worldY=HORIZON_Y+t*(ROAD_END_Y-HORIZON_Y);
       const sc=pSc(worldY);
       if(sc<0.13){ s.gfx.clear(); continue; }
-      const pos=this._tunnelPoint(t, s.side<0?Math.PI-0.14:0.14);
-      const sideX=pos.x+s.side*8*sc;
+      const hw = this._trackHalfWidth(t);
+      const sideX = this._curveCenterX(worldY) + s.side * (hw + 20 * sc);
       s.gfx.clear();
-      this._drawWorldScenery(s.gfx,w,sideX,pos.y,sc,s.side,t);
+      this._drawWorldScenery(s.gfx,w,sideX,worldY,sc,s.side,t);
       s.gfx.setDepth(3.8+t*0.1);
     }
   }
@@ -448,40 +442,12 @@ class GameScene extends Phaser.Scene {
 
   // ── Static background ───────────────────────────────────────────────────────
   _buildBg() {
-    const sky = this.add.graphics();
-    sky.fillGradientStyle(0x030711, 0x030711, 0x0a1220, 0x0a1220, 1);
-    sky.fillRect(0, 0, W, H);
-
-    // The run reads as a camera flying through a tunnel from a third-person,
-    // slightly elevated angle. The vanishing point sits above Sofia instead of
-    // directly behind her head, so upcoming obstacles remain visible over her.
-    const tunnelGlow = this.add.graphics().setDepth(0.4);
-    tunnelGlow.fillStyle(0x0a1a2f, 0.92);
-    tunnelGlow.fillEllipse(VP_X, VP_Y, TUNNEL_NEAR_RX * 2.1, TUNNEL_NEAR_RY * 2.05);
-    tunnelGlow.fillStyle(0x020409, 0.78);
-    tunnelGlow.fillCircle(VP_X, VP_Y, 60);
-    tunnelGlow.lineStyle(2, 0x51b7ff, 0.2);
-    tunnelGlow.strokeCircle(VP_X, VP_Y, 68);
-
-    for (let i = 0; i < 48; i++) {
-      const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
-      const radius = Phaser.Math.FloatBetween(48, Math.max(W, H) * 0.72);
-      const x = VP_X + Math.cos(angle) * radius * Phaser.Math.FloatBetween(0.72, 1.08);
-      const y = VP_Y + Math.sin(angle) * radius * Phaser.Math.FloatBetween(0.58, 1.0);
-      if (x < -12 || x > W + 12 || y < -12 || y > H + 12) continue;
-      const dist = Phaser.Math.Distance.Between(VP_X, VP_Y, x, y);
-      const alpha = Phaser.Math.Clamp(dist / 420, 0.16, 0.76);
-      this.add.circle(x, y, Math.random() < 0.18 ? 2 : 1, 0xffffff).setAlpha(alpha);
-    }
-
-    this.add.circle(318, 62, 24, 0xfff9c4).setAlpha(0.32);
-    this.add.circle(308, 56, 19, 0x0a1220).setAlpha(0.55);
+    // World backdrop (depth 0) provides sky + ground; only keep the combo flash overlay
     this.lightPulse = this.add.rectangle(W / 2, H / 2, W, H, 0x00e5ff, 0).setDepth(0.8);
   }
 
   _trackHalfWidth(t) {
-    const tunnelT = Math.pow(Phaser.Math.Clamp(t, 0, 1), 1.55);
-    return TRACK_FAR_HW + tunnelT * (TRACK_NEAR_HW - TRACK_FAR_HW);
+    return TRACK_FAR_HW + Phaser.Math.Clamp(t, 0, 1) * (TRACK_NEAR_HW - TRACK_FAR_HW);
   }
 
   _curveOffset(y) {
@@ -494,24 +460,9 @@ class GameScene extends Phaser.Scene {
     return VP_X + this._curveOffset(y);
   }
 
-  _tunnelPoint(t, angle) {
-    const q = Math.pow(Phaser.Math.Clamp(t, 0, 1), 1.08);
-    const y = HORIZON_Y + t * (ROAD_END_Y - HORIZON_Y);
-    const cx = this._curveCenterX(y);
-    const rx = 8 + q * TUNNEL_NEAR_RX;
-    const ry = 6 + q * TUNNEL_NEAR_RY;
-    return { x: cx + Math.cos(angle) * rx, y: VP_Y + Math.sin(angle) * ry };
-  }
-
-  _tunnelRing(t, steps = 36) {
-    const points = [];
-    for (let i = 0; i <= steps; i++) points.push(this._tunnelPoint(t, (i / steps) * Math.PI * 2));
-    return points;
-  }
-
   _laneX(lane, y) {
     const t = pT(y);
-    return this._curveCenterX(y) + LANE_SIDE[lane] * this._trackHalfWidth(t) * 0.58;
+    return this._curveCenterX(y) + LANE_SIDE[lane] * this._trackHalfWidth(t) * 0.667;
   }
 
   _updateTrackCurve(delta) {
@@ -606,20 +557,28 @@ class GameScene extends Phaser.Scene {
 
   _updateSpeedLines(dt) {
     if (!this.speedLines) return;
+    const w = WORLDS[this.worldIdx];
+    const comboEnergy = Phaser.Math.Clamp((this.combo - 1) / 4, 0, 1);
     for (const l of this.speedLines) {
       l.baseT = (l.baseT + this.speed * dt * 1.28 / (ROAD_END_Y - HORIZON_Y)) % 1;
       const t = Math.max(0.05, l.baseT);
+      const t2 = Math.min(1, t + 0.07 + this.speed / 6200);
       const y = HORIZON_Y + t * (ROAD_END_Y - HORIZON_Y);
-      const angle = (l.side < 0 ? Math.PI - 0.44 : 0.44) + l.angleJitter;
-      const p1 = this._tunnelPoint(t, angle);
-      const p2 = this._tunnelPoint(Math.min(1, t + 0.08 + this.speed / 6200), angle + l.side * 0.04);
-      const comboEnergy = Phaser.Math.Clamp((this.combo - 1) / 4, 0, 1);
-      const alpha = 0.04 + t * 0.26 + this.beatPulse * 0.1 + comboEnergy * 0.08;
+      const y2 = HORIZON_Y + t2 * (ROAD_END_Y - HORIZON_Y);
+      const hw = this._trackHalfWidth(t);
+      const hw2 = this._trackHalfWidth(t2);
+      const cx = this._curveCenterX(y);
+      const cx2 = this._curveCenterX(y2);
+      const outset = (22 + Math.abs(l.angleJitter) * 28) * pSc(y);
+      const outset2 = (22 + Math.abs(l.angleJitter) * 28) * pSc(y2);
+      const x1 = cx + l.side * (hw + outset);
+      const x2 = cx2 + l.side * (hw2 + outset2);
+      const alpha = 0.05 + t * 0.22 + (this.beatPulse || 0) * 0.12 + comboEnergy * 0.08;
       l.gfx.clear();
-      l.gfx.lineStyle(Math.max(1, t * (5 + comboEnergy * 2)), 0x80deea, alpha);
+      l.gfx.lineStyle(Math.max(1, t * (4 + comboEnergy * 2)), w.accent, alpha * 0.55);
       l.gfx.beginPath();
-      l.gfx.moveTo(p1.x, p1.y);
-      l.gfx.lineTo(p2.x, p2.y);
+      l.gfx.moveTo(x1, y);
+      l.gfx.lineTo(x2, y2);
       l.gfx.strokePath();
     }
   }
@@ -630,98 +589,22 @@ class GameScene extends Phaser.Scene {
     const hg = this.horizonG;
     g.clear();
     hg.clear();
+    const w = WORLDS[this.worldIdx];
     const comboEnergy = Phaser.Math.Clamp((this.combo - 1) / 4, 0, 1);
+    const segments = 28;
 
-    hg.fillStyle(0x00131f, 0.5);
-    hg.fillCircle(VP_X, VP_Y, 58);
-    hg.lineStyle(2, 0x51b7ff, 0.22 + comboEnergy * 0.08);
-    hg.strokeCircle(VP_X, VP_Y, 65);
-
-    const segments = 30;
-    const left = [];
-    const right = [];
-    const lane1 = [];
-    const lane2 = [];
+    // Build left/right/lane edge arrays
+    const left = [], right = [], lane1 = [], lane2 = [];
     for (let i = 0; i <= segments; i++) {
       const t = i / segments;
       const y = HORIZON_Y + t * (ROAD_END_Y - HORIZON_Y);
-      const sy = projectY(y);
-      const depthT = pT(y);
       const cx = this._curveCenterX(y);
-      const hw = this._trackHalfWidth(depthT);
-      left.push({ x: cx - hw, y: sy });
-      right.push({ x: cx + hw, y: sy });
-      lane1.push({ x: cx - hw * 0.333, y: sy });
-      lane2.push({ x: cx + hw * 0.333, y: sy });
+      const hw = this._trackHalfWidth(pT(y));
+      left.push({ x: cx - hw, y });
+      right.push({ x: cx + hw, y });
+      lane1.push({ x: cx - hw * 0.333, y });
+      lane2.push({ x: cx + hw * 0.333, y });
     }
-
-    const ringStroke = (t, color, alpha, width = 1) => {
-      const ring = this._tunnelRing(t);
-      g.lineStyle(width, color, alpha);
-      g.beginPath();
-      g.moveTo(ring[0].x, ring[0].y);
-      for (let i = 1; i < ring.length; i++) g.lineTo(ring[i].x, ring[i].y);
-      g.strokePath();
-    };
-
-    // Static radial tunnel shell. The ceiling, walls, and floor all share the
-    // same central vanishing point, so the environment expands toward the player
-    // uniformly in every direction.
-    for (let i = 0; i <= segments; i++) {
-      const t = i / segments;
-      const alpha = 0.012 + t * 0.025 + (this.beatPulse || 0) * 0.02 + comboEnergy * 0.012;
-      if (i % 6 === 0) ringStroke(t, 0x244660, alpha, Math.max(1, t * 1.5));
-    }
-
-    for (let i = 0; i < 6; i++) {
-      const angle = (i / 6) * Math.PI * 2;
-      const inner = this._tunnelPoint(0.03, angle);
-      const outer = this._tunnelPoint(1, angle);
-      const sideGlow = Math.abs(Math.sin(angle));
-      g.lineStyle(1, 0x2f5f86, 0.02 + sideGlow * 0.03);
-      g.beginPath();
-      g.moveTo(inner.x, inner.y);
-      g.lineTo(outer.x, outer.y);
-      g.strokePath();
-    }
-
-    // Animated depth rings expand from the center to the top, bottom, and sides.
-    // This is the main forward-motion cue for the tunnel effect.
-    for (let i = 0; i < 6; i++) {
-      const t = (i / 6 + this.markOffset) % 1;
-      const pulseT = Math.max(t, 0.025);
-      ringStroke(pulseT, 0x80deea, 0.035 + pulseT * 0.12 + (this.beatPulse || 0) * 0.04 + comboEnergy * 0.035, Math.max(1, pulseT * (3 + comboEnergy)));
-    }
-
-    const wallLeft = left.map((pt, i) => {
-      const t = i / segments;
-      const side = this._tunnelPoint(t, Math.PI * 0.92);
-      return { x: side.x, y: Math.max(side.y, pt.y - 18 * (1 - t)) };
-    });
-    const wallRight = right.map((pt, i) => {
-      const t = i / segments;
-      const side = this._tunnelPoint(t, Math.PI * 0.08);
-      return { x: side.x, y: Math.max(side.y, pt.y - 18 * (1 - t)) };
-    });
-
-    const ceilLeft = left.map((pt, i) => this._tunnelPoint(i / segments, Math.PI * 1.22));
-    const ceilRight = right.map((pt, i) => this._tunnelPoint(i / segments, Math.PI * 1.78));
-    g.fillStyle(0x070d18, 0.78);
-    g.fillPoints([...ceilLeft, ...ceilRight.slice().reverse()], true);
-    g.fillStyle(0x101827, 0.92);
-    g.fillPoints([...wallLeft, ...left.slice().reverse()], true);
-    g.fillPoints([...right, ...wallRight.slice().reverse()], true);
-
-    g.fillGradientStyle(0x111827, 0x111827, 0x222d42, 0x222d42, 1);
-    g.fillPoints([...left, ...right.slice().reverse()], true);
-
-    const laneFill = (a, b, color, alpha) => {
-      g.fillStyle(color, alpha + (this.beatPulse || 0) * 0.025 + comboEnergy * 0.035);
-      g.fillPoints([...a, ...b.slice().reverse()], true);
-    };
-    laneFill(left, lane1, 0x102a3f, 0.18);
-    laneFill(lane1, lane2, 0x162f48, 0.22);
-    laneFill(lane2, right, 0x102a3f, 0.18);
 
     const strokeLine = (points, width, color, alpha) => {
       g.lineStyle(width, color, alpha);
@@ -731,35 +614,58 @@ class GameScene extends Phaser.Scene {
       g.strokePath();
     };
 
-    strokeLine(ceilLeft, 2, 0x19314a, 0.62);
-    strokeLine(ceilRight, 2, 0x19314a, 0.62);
-    strokeLine(wallLeft, 2, 0x263f5b, 0.8);
-    strokeLine(wallRight, 2, 0x263f5b, 0.8);
-    strokeLine(left, 5, 0x00e5ff, 0.72 + comboEnergy * 0.1);
-    strokeLine(right, 5, 0x00e5ff, 0.72 + comboEnergy * 0.1);
-    strokeLine(lane1, 4, 0xb2ebff, 0.9);
-    strokeLine(lane2, 4, 0xb2ebff, 0.9);
+    // Ground fill: gradient from far to near colour
+    g.fillGradientStyle(w.grd.far, w.grd.far, w.grd.near, w.grd.near, 1);
+    g.fillRect(0, HORIZON_Y, W, ROAD_END_Y - HORIZON_Y + 80);
 
-    for (let i = 1; i < segments; i += 5) {
-      const t = i / segments;
-      const alpha = 0.08 + t * 0.2;
-      g.lineStyle(Math.max(1, 3 * t), 0x80deea, alpha);
-      g.beginPath();
-      g.moveTo(wallLeft[i].x, wallLeft[i].y);
-      g.lineTo(wallRight[i].x, wallRight[i].y);
-      g.strokePath();
+    // Path (track surface) trapezoid
+    g.fillStyle(w.grd.path, 1);
+    g.fillPoints([...left, ...right.slice().reverse()], true);
+
+    // Perspective ties — power-spaced, denser near horizon
+    const tieCount = 18;
+    for (let i = 0; i < tieCount; i++) {
+      const rawT = i / tieCount;
+      const t = Math.pow(rawT, 1.8);
+      const y = HORIZON_Y + t * (ROAD_END_Y - HORIZON_Y);
+      const cx = this._curveCenterX(y);
+      const hw = this._trackHalfWidth(pT(y));
+      const col = i % 2 === 0 ? w.grd.tieA : w.grd.tieB;
+      g.fillStyle(col, 0.45 + t * 0.35);
+      const th = Math.max(1, 3 * pT(y));
+      g.fillRect(cx - hw, y - th / 2, hw * 2, th);
     }
 
-    g.lineStyle(2, 0x90caf9, 0.72);
-    g.beginPath();
-    g.moveTo(left[0].x, VP_Y);
-    g.lineTo(right[0].x, VP_Y);
-    g.strokePath();
-    g.lineStyle(5, 0x455a64, 0.82);
-    g.beginPath();
-    g.moveTo(left[left.length - 1].x, projectY(ROAD_END_Y));
-    g.lineTo(right[right.length - 1].x, projectY(ROAD_END_Y));
-    g.strokePath();
+    // Lane dividers
+    strokeLine(lane1, 1.5, w.grd.edge, 0.38);
+    strokeLine(lane2, 1.5, w.grd.edge, 0.38);
+
+    // Outer rail lines
+    strokeLine(left, 4, w.grd.edge, 0.92 + comboEnergy * 0.08);
+    strokeLine(right, 4, w.grd.edge, 0.92 + comboEnergy * 0.08);
+
+    // Animated scrolling depth pulse
+    for (let i = 0; i < 5; i++) {
+      const t = ((i / 5 + this.markOffset) % 1);
+      const y2 = HORIZON_Y + t * (ROAD_END_Y - HORIZON_Y);
+      const cx2 = this._curveCenterX(y2);
+      const hw2 = this._trackHalfWidth(pT(y2));
+      const alpha = (0.08 + t * 0.22) * (0.5 + (this.beatPulse || 0) * 0.5 + comboEnergy * 0.3);
+      g.lineStyle(Math.max(1, 2.5 * pT(y2)), w.grd.edge, alpha);
+      g.beginPath(); g.moveTo(cx2 - hw2, y2); g.lineTo(cx2 + hw2, y2); g.strokePath();
+    }
+
+    // Horizon glow line in accent colour
+    hg.lineStyle(14, w.accent, 0.07 + comboEnergy * 0.06);
+    hg.beginPath(); hg.moveTo(0, HORIZON_Y); hg.lineTo(W, HORIZON_Y); hg.strokePath();
+    hg.lineStyle(2.5, w.accent, 0.75 + comboEnergy * 0.2);
+    hg.beginPath(); hg.moveTo(0, HORIZON_Y); hg.lineTo(W, HORIZON_Y); hg.strokePath();
+
+    // Near edge
+    const nearCx = this._curveCenterX(ROAD_END_Y);
+    const nearHw = this._trackHalfWidth(1);
+    g.lineStyle(4, w.grd.edge, 0.55);
+    g.beginPath(); g.moveTo(nearCx - nearHw, ROAD_END_Y); g.lineTo(nearCx + nearHw, ROAD_END_Y); g.strokePath();
   }
 
   _buildTrackMarks() {
@@ -790,53 +696,11 @@ class GameScene extends Phaser.Scene {
   }
 
   _buildSideScenery() {
-    for (let i = 0; i < 6; i++) {
-      const baseT = (i + 0.5) / 6;
-      const mkLight = (side) => {
-        const panel = this.add.graphics().setDepth(3);
-        const bulb = this.add.circle(0, 0, 1, 0xffee58).setAlpha(0.6).setDepth(4);
-        const glow = this.add.circle(0, 0, 1, 0xfff59d, 0.16).setDepth(3.5);
-        return { panel, bulb, glow, baseT, side };
-      };
-      this.scenery.push(mkLight(-1));
-      this.scenery.push(mkLight(1));
-    }
+    // World scenery (_buildWorldScenery) replaces the old lamp-post scenery
   }
 
   _updateSideScenery(dt) {
-    for (const s of this.scenery) {
-      s.baseT = (s.baseT + this.speed * dt / (ROAD_END_Y - HORIZON_Y)) % 1;
-      const t = Math.max(s.baseT, 0.02);
-      const sideAngle = s.side < 0 ? Math.PI - 0.28 : 0.28;
-      const bob = Math.sin((s.baseT * 3 + this.turnSway) * Math.PI * 2) * 0.18;
-      const angle = sideAngle + s.side * bob;
-      const pos = this._tunnelPoint(t, angle);
-      const sc = pSc(HORIZON_Y + t * (NEAR_Y - HORIZON_Y));
-      const panelW = Math.max(2, 18 * sc);
-      const panelH = Math.max(4, 84 * sc);
-      const tangent = angle + Math.PI / 2;
-      const nx = Math.cos(angle), ny = Math.sin(angle);
-      const tx = Math.cos(tangent), ty = Math.sin(tangent);
-      const depth = 2.3 + t * 3.5;
-
-      s.panel.clear();
-      s.panel.fillStyle(0x1b2b3f, 0.76);
-      s.panel.fillPoints([
-        { x: pos.x - tx * panelW * 0.5 - nx * panelH * 0.12, y: pos.y - ty * panelW * 0.5 - ny * panelH * 0.12 },
-        { x: pos.x + tx * panelW * 0.5 - nx * panelH * 0.12, y: pos.y + ty * panelW * 0.5 - ny * panelH * 0.12 },
-        { x: pos.x + tx * panelW * 0.38 + nx * panelH * 0.44, y: pos.y + ty * panelW * 0.38 + ny * panelH * 0.44 },
-        { x: pos.x - tx * panelW * 0.38 + nx * panelH * 0.44, y: pos.y - ty * panelW * 0.38 + ny * panelH * 0.44 },
-      ], true);
-      s.panel.lineStyle(Math.max(1, 2 * sc), 0x6ec6ff, 0.25 + t * 0.25);
-      s.panel.strokePath();
-      s.panel.setDepth(depth);
-
-      const lightX = pos.x + nx * panelH * 0.1;
-      const lightY = pos.y + ny * panelH * 0.1;
-      const comboEnergy = Phaser.Math.Clamp((this.combo - 1) / 4, 0, 1);
-      s.glow.setPosition(lightX, lightY).setRadius(Math.max(2, 18 * sc * (1 + (this.beatPulse || 0) * 0.3 + comboEnergy * 0.22))).setAlpha(0.04 + t * 0.18 + (this.beatPulse || 0) * 0.12 + comboEnergy * 0.08).setDepth(depth + 0.1);
-      s.bulb.setPosition(lightX, lightY).setRadius(Math.max(1, 5 * sc * (1 + comboEnergy * 0.12))).setAlpha(0.18 + t * 0.48 + (this.beatPulse || 0) * 0.2 + comboEnergy * 0.08).setDepth(depth + 0.2);
-    }
+    // World scenery (_updateWorldScenery) replaces the old lamp-post scenery
   }
 
   _buildPlayer() {
