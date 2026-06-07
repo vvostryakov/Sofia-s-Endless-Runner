@@ -7,22 +7,52 @@ class AudioManager {
     this._sfxGain = null;
     this._track = null;
     this._loopTimer = null;
+    this._muted = false;
+    this._pendingPlayId = 0;
+    this._scheduleFn = null;
   }
 
   _init() {
-    if (this._ctx) {
-      if (this._ctx.state === 'suspended') this._ctx.resume();
-      return;
-    }
-    this._ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (this._ctx) return true;
+
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextCtor) return false;
+
+    this._ctx = new AudioContextCtor();
 
     this._musicGain = this._ctx.createGain();
-    this._musicGain.gain.value = 0.38;
+    this._musicGain.gain.value = this._muted ? 0 : 0.38;
     this._musicGain.connect(this._ctx.destination);
 
     this._sfxGain = this._ctx.createGain();
-    this._sfxGain.gain.value = 0.75;
+    this._sfxGain.gain.value = this._muted ? 0 : 0.75;
     this._sfxGain.connect(this._ctx.destination);
+
+    return true;
+  }
+
+  _resume() {
+    if (!this._ctx || this._ctx.state === 'running' || this._ctx.state === 'closed' || typeof this._ctx.resume !== 'function') {
+      return null;
+    }
+
+    return this._ctx.resume();
+  }
+
+  _restartCurrentTrack() {
+    if (!this._track || !this._scheduleFn || this._loopTimer || this._ctx.state !== 'running') return;
+    this._loop(this._scheduleFn);
+  }
+
+  unlock() {
+    if (!this._init()) return;
+
+    const resumePromise = this._resume();
+    if (resumePromise && typeof resumePromise.then === 'function') {
+      resumePromise.then(() => this._restartCurrentTrack()).catch(() => {});
+    } else {
+      this._restartCurrentTrack();
+    }
   }
 
   _freq(midi) {
@@ -113,9 +143,57 @@ class AudioManager {
     return len;
   }
 
+
+  // ── Rhythm Run music — simple beat-test loop, 128 BPM ─────────────────────
+
+  _scheduleRhythm(startTime) {
+    const BPM = 128, beat = 60 / BPM;
+    const len = 16 * beat;
+
+    // Bright lead marks every collectable beat.
+    const lead = [72, 72, 79, 76, 74, 76, 79, 83, 81, 79, 76, 74, 72, 74, 76, 79];
+    lead.forEach((n, i) => {
+      this._note(n, startTime + i * beat, beat * 0.32, i % 4 === 0 ? 0.13 : 0.09, 'square');
+    });
+
+    // Bass pulse keeps the rhythm easy to hear.
+    const bass = [48, 48, 43, 43, 45, 45, 47, 47, 48, 48, 43, 43, 45, 47, 48, 48];
+    bass.forEach((n, i) => {
+      this._note(n, startTime + i * beat, beat * 0.36, 0.12, 'sawtooth');
+    });
+
+    // Drum grid: kick on downbeats, snare on 2 and 4, hats on eighth notes.
+    [0, 4, 8, 12].forEach(i => this._kick(startTime + i * beat));
+    [2, 6, 10, 14].forEach(i => this._snare(startTime + i * beat));
+    for (let i = 0; i < 32; i++) this._hat(startTime + i * beat * 0.5);
+
+    return len;
+  }
+
+  _snare(t) {
+    const ctx = this._ctx;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(190, t);
+    osc.frequency.exponentialRampToValueAtTime(95, t + 0.09);
+    gain.gain.setValueAtTime(0.24, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.11);
+    osc.connect(gain);
+    gain.connect(this._musicGain);
+    osc.start(t);
+    osc.stop(t + 0.13);
+  }
+
+  _hat(t) {
+    this._note(103, t, 0.035, 0.028, 'triangle');
+  }
+
   // ── Loop driver ───────────────────────────────────────────────────────────
 
   _loop(scheduleFn) {
+    if (!this._ctx || this._ctx.state !== 'running') return;
+
     const len = scheduleFn.call(this, this._ctx.currentTime + 0.05);
     this._loopTimer = setTimeout(() => {
       if (this._track) this._loop(scheduleFn);
@@ -124,29 +202,56 @@ class AudioManager {
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
-  playMenu() {
-    this._init();
+  _playTrack(track, scheduleFn) {
+    if (!this._init()) return;
+
     this.stop();
-    this._track = 'menu';
-    this._loop(this._scheduleMenu);
+    this._track = track;
+    this._scheduleFn = scheduleFn;
+    const playId = ++this._pendingPlayId;
+    const start = () => {
+      if (this._track === track && this._pendingPlayId === playId) this._restartCurrentTrack();
+    };
+    const resumePromise = this._resume();
+
+    if (resumePromise && typeof resumePromise.then === 'function') {
+      resumePromise.then(start).catch(() => {});
+    } else {
+      start();
+    }
+  }
+
+  playMenu() {
+    this._playTrack('menu', this._scheduleMenu);
   }
 
   playGame() {
-    this._init();
-    this.stop();
-    this._track = 'game';
-    this._loop(this._scheduleGame);
+    this._playTrack('game', this._scheduleGame);
+  }
+
+  playRhythm() {
+    this._playTrack('rhythm', this._scheduleRhythm);
   }
 
   stop() {
+    this._pendingPlayId++;
     this._track = null;
+    this._scheduleFn = null;
     if (this._loopTimer) { clearTimeout(this._loopTimer); this._loopTimer = null; }
+  }
+
+  setMuted(muted) {
+    this._muted = muted;
+    if (!this._ctx) return;
+    this._musicGain.gain.value = muted ? 0 : 0.38;
+    this._sfxGain.gain.value = muted ? 0 : 0.75;
   }
 
   // ── SFX ───────────────────────────────────────────────────────────────────
 
   jump() {
-    this._init();
+    if (!this._init()) return;
+    this.unlock();
     const ctx = this._ctx, t = ctx.currentTime;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -162,7 +267,8 @@ class AudioManager {
   }
 
   land() {
-    this._init();
+    if (!this._init()) return;
+    this.unlock();
     const ctx = this._ctx, t = ctx.currentTime;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -178,7 +284,8 @@ class AudioManager {
   }
 
   coin() {
-    this._init();
+    if (!this._init()) return;
+    this.unlock();
     const t = this._ctx.currentTime;
     [79, 83, 86].forEach((n, i) => {
       this._note(n, t + i * 0.055, 0.11, 0.22, 'square', 'sfx');
@@ -186,7 +293,8 @@ class AudioManager {
   }
 
   switchLane() {
-    this._init();
+    if (!this._init()) return;
+    this.unlock();
     const ctx = this._ctx, t = ctx.currentTime;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -201,8 +309,35 @@ class AudioManager {
     osc.stop(t + 0.1);
   }
 
+  powerUp() {
+    if (!this._init()) return;
+    this.unlock();
+    const t = this._ctx.currentTime;
+    [72, 76, 79, 84].forEach((n, i) => {
+      this._note(n, t + i * 0.045, 0.13, 0.18, 'triangle', 'sfx');
+    });
+  }
+
+  shieldBreak() {
+    if (!this._init()) return;
+    this.unlock();
+    const ctx = this._ctx, t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(760, t);
+    osc.frequency.exponentialRampToValueAtTime(170, t + 0.16);
+    gain.gain.setValueAtTime(0.24, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+    osc.connect(gain);
+    gain.connect(this._sfxGain);
+    osc.start(t);
+    osc.stop(t + 0.22);
+  }
+
   gameOver() {
-    this._init();
+    if (!this._init()) return;
+    this.unlock();
     this.stop();
     const t = this._ctx.currentTime;
     // Descending wail
