@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main, master, "claude/**"]
+    branches-ignore: [gh-pages]
 
 permissions:
   contents: write
@@ -12,6 +12,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Generate deployed app version
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          BUILT_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          cat > version.js <<EOF
+          window.APP_VERSION = {
+            label: '${SHORT_SHA}',
+            commit: '${GITHUB_SHA}',
+            builtAt: '${BUILT_AT}',
+          };
+          EOF
+          export SHORT_SHA
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          short_sha = os.environ['SHORT_SHA']
+          index = Path('index.html')
+          html = index.read_text()
+          for asset in ('version.js', 'audio.js', 'game.js'):
+              html = html.replace(f'src="{asset}"', f'src="{asset}?v={short_sha}"')
+          index.write_text(html)
+          PY
 
       - name: Deploy to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
