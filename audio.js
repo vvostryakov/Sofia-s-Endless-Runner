@@ -10,6 +10,8 @@ class AudioManager {
     this._muted = false;
     this._pendingPlayId = 0;
     this._scheduleFn = null;
+    this._trackStart = null;
+    this._nextLoopStart = 0;
   }
 
   _init() {
@@ -194,10 +196,25 @@ class AudioManager {
   _loop(scheduleFn) {
     if (!this._ctx || this._ctx.state !== 'running') return;
 
-    const len = scheduleFn.call(this, this._ctx.currentTime + 0.05);
+    // Schedule each iteration at an absolute time so loops never drift —
+    // the game derives beat timing from this clock via getTrackTime().
+    if (this._trackStart === null) {
+      this._trackStart = this._ctx.currentTime + 0.05;
+      this._nextLoopStart = this._trackStart;
+    }
+    const len = scheduleFn.call(this, this._nextLoopStart);
+    this._nextLoopStart += len;
+    const waitMs = Math.max(20, (this._nextLoopStart - this._ctx.currentTime - 0.12) * 1000);
     this._loopTimer = setTimeout(() => {
       if (this._track) this._loop(scheduleFn);
-    }, (len - 0.08) * 1000);
+    }, waitMs);
+  }
+
+  // Seconds since the current track actually started playing, or null when
+  // no track is audibly running (stopped, or still waiting on user unlock).
+  getTrackTime() {
+    if (!this._ctx || !this._track || this._trackStart === null) return null;
+    return Math.max(0, this._ctx.currentTime - this._trackStart);
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -237,6 +254,7 @@ class AudioManager {
     this._pendingPlayId++;
     this._track = null;
     this._scheduleFn = null;
+    this._trackStart = null;
     if (this._loopTimer) { clearTimeout(this._loopTimer); this._loopTimer = null; }
   }
 

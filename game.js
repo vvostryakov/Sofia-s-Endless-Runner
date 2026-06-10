@@ -84,9 +84,14 @@ const LANE_SIDE = [-1, 0, 1];
 const STORAGE_KEYS = {
   bestScore: 'ser_best_score_v1',
   bestCoins: 'ser_best_coins_v1',
+  bestScoreRhythm: 'ser_best_score_rhythm_v1',
+  bestCoinsRhythm: 'ser_best_coins_rhythm_v1',
   muted: 'ser_muted_v1',
   seenHelp: 'ser_seen_help_v1',
 };
+const bestKeys = (rhythm) => rhythm
+  ? { score: STORAGE_KEYS.bestScoreRhythm, coins: STORAGE_KEYS.bestCoinsRhythm }
+  : { score: STORAGE_KEYS.bestScore, coins: STORAGE_KEYS.bestCoins };
 
 const saveNumber = (key, value) => localStorage.setItem(key, String(Math.max(0, Math.floor(value))));
 const loadNumber = (key) => Number(localStorage.getItem(key) || 0);
@@ -96,7 +101,10 @@ const unlockAudio = () => {
 const setAudioMuted = (muted) => {
   if (window.audio && typeof audio.setMuted === 'function') audio.setMuted(muted);
 };
-const bestSummary = () => `Best: ${loadNumber(STORAGE_KEYS.bestScore)} · Coins: ${loadNumber(STORAGE_KEYS.bestCoins)}`;
+const bestSummary = (rhythm = false) => {
+  const k = bestKeys(rhythm);
+  return `Best: ${loadNumber(k.score)} · Coins: ${loadNumber(k.coins)}`;
+};
 const appVersionLabel = () => {
   const version = window.APP_VERSION || {};
   return `Version: ${version.label || version.commit || 'local-dev'}`;
@@ -171,8 +179,11 @@ class BootScene extends Phaser.Scene {
     this.panel.add(this.add.text(cx, cy - 112, 'Endless Runner', {
       fontSize: '28px', fontFamily: 'Arial', fill: '#fff', stroke: '#000', strokeThickness: 4,
     }).setOrigin(0.5));
-    this.panel.add(this.add.text(cx, cy - 58, bestSummary(), {
-      fontSize: '18px', fontFamily: 'Arial', fill: '#b7e4ff',
+    this.panel.add(this.add.text(cx, cy - 66, `Run — ${bestSummary(false)}`, {
+      fontSize: '15px', fontFamily: 'Arial', fill: '#b7e4ff',
+    }).setOrigin(0.5));
+    this.panel.add(this.add.text(cx, cy - 46, `Rhythm — ${bestSummary(true)}`, {
+      fontSize: '15px', fontFamily: 'Arial', fill: '#d8b7ff',
     }).setOrigin(0.5));
     this.panel.add(this.add.text(cx, cy - 12, 'Three lanes. Jump, double-jump, slide, chain combos, and grab power-ups — or try Rhythm Run.', {
       fontSize: '15px', fontFamily: 'Arial', fill: '#d4e3ff', align: 'center', wordWrap: { width: 330 },
@@ -292,6 +303,7 @@ class GameScene extends Phaser.Scene {
     this.turnSway = 0;
     this.nextRhythmBeat = RHYTHM_APPROACH_BEATS;
     this.lastBeatPulse = -1;
+    this.musicTime = 0;
     this.beatPulse = 0;
     this.collectPulse = 0;
     this.playerBounce = 0;
@@ -318,6 +330,18 @@ class GameScene extends Phaser.Scene {
     if (this.rhythmMode) audio.playRhythm();
     else audio.playGame();
     this._showCountdown();
+
+    // Auto-pause when the tab is hidden or the window loses focus
+    this._onVisibility = () => {
+      if (document.hidden && this.alive && !this.pausedRun) this._togglePause();
+    };
+    this._onBlur = () => { if (this.alive && !this.pausedRun) this._togglePause(); };
+    document.addEventListener('visibilitychange', this._onVisibility);
+    window.addEventListener('blur', this._onBlur);
+    this.events.once('shutdown', () => {
+      document.removeEventListener('visibilitychange', this._onVisibility);
+      window.removeEventListener('blur', this._onBlur);
+    });
   }
 
   // ── World visual layer (backdrop + scenery, rebuilt on world change) ─────────
@@ -888,10 +912,10 @@ class GameScene extends Phaser.Scene {
       fontSize: '24px', fontFamily: 'Arial Black, Arial', fill: '#ffffff', stroke: '#00121f', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(22);
 
-    this.add.circle(W - 84, 32, 9, 0xffd700).setDepth(22);
-    this.coinTxt = this.add.text(W - 68, 32, '0', {
+    this.add.circle(W - 110, 32, 9, 0xffd700).setDepth(22);
+    this.coinTxt = this.add.text(W - 52, 32, '0', {
       fontSize: '19px', fontFamily: 'Arial Black, Arial', fill: '#ffd700', stroke: '#1b1200', strokeThickness: 3,
-    }).setOrigin(0, 0.5).setDepth(22);
+    }).setOrigin(1, 0.5).setDepth(22);
     this.modeTxt = this.add.text(W / 2, 82, this.rhythmMode ? 'RHYTHM RUN' : 'ENDLESS RUN', {
       fontSize: '10px', fontFamily: 'Arial Black, Arial', fill: '#b2ebff', letterSpacing: 2,
     }).setOrigin(0.5).setDepth(22).setAlpha(0.56);
@@ -956,7 +980,7 @@ class GameScene extends Phaser.Scene {
       this.jumpVel = grounded ? JUMP_INIT : DOUBLE_JUMP_INIT;
       if (!grounded) this.flipT = 1; // front-flip on the double jump
       this.jumpsUsed = grounded ? 1 : this.jumpsUsed + 1;
-      this.combo = grounded ? 1 : Math.max(1, this.combo);
+      this.combo = Math.max(1, this.combo);
       this._toast(grounded ? 'Jump' : 'Double jump', this.pX, NEAR_Y - this.jumpH - 80);
       audio.jump();
     }
@@ -987,10 +1011,14 @@ class GameScene extends Phaser.Scene {
     this.pausedRun = !this.pausedRun;
     if (this.pausedRun) {
       audio.stop();
+      this.tweens.pauseAll();
+      this.time.paused = true;
       this._showPauseOverlay();
     } else {
       if (this.rhythmMode) audio.playRhythm();
       else audio.playGame();
+      this.tweens.resumeAll();
+      this.time.paused = false;
       this._hidePauseOverlay();
       this._showCountdown('GO');
     }
@@ -1053,8 +1081,21 @@ class GameScene extends Phaser.Scene {
     });
   }
 
+  _resyncRhythm(newMusicTime) {
+    this.musicTime = newMusicTime;
+    for (let i = this.gameObjs.length - 1; i >= 0; i--) {
+      const o = this.gameObjs[i];
+      if (o.rhythmTimed) {
+        o.parts.forEach(p => p.destroy());
+        this.gameObjs.splice(i, 1);
+      }
+    }
+    this.nextRhythmBeat = Math.max(RHYTHM_APPROACH_BEATS, Math.floor(newMusicTime / RHYTHM_BEAT_MS) + 2);
+    this.lastBeatPulse = -1;
+  }
+
   _updateRhythmSpawner() {
-    const currentBeat = Math.floor(this.runTime / RHYTHM_BEAT_MS);
+    const currentBeat = Math.floor(this.musicTime / RHYTHM_BEAT_MS);
     if (currentBeat !== this.lastBeatPulse) {
       this.lastBeatPulse = currentBeat;
       this.beatPulse = 1;
@@ -1064,11 +1105,11 @@ class GameScene extends Phaser.Scene {
       }
     }
 
-    const lookaheadHitTime = this.runTime + RHYTHM_APPROACH_MS;
+    const lookaheadHitTime = this.musicTime + RHYTHM_APPROACH_MS;
     while (this.nextRhythmBeat * RHYTHM_BEAT_MS <= lookaheadHitTime) {
       const hitTime = this.nextRhythmBeat * RHYTHM_BEAT_MS;
       this._spawnRhythmCoin(this.nextRhythmBeat, hitTime);
-      if (this.runTime > 6500 && this.nextRhythmBeat % 8 === 6) this._spawnRhythmObstacle(this.nextRhythmBeat);
+      if (this.musicTime > 6500 && this.nextRhythmBeat % 8 === 6) this._spawnRhythmObstacle(this.nextRhythmBeat);
       this.nextRhythmBeat += 1;
     }
   }
@@ -1334,7 +1375,7 @@ class GameScene extends Phaser.Scene {
     }
 
     if (obj.type === 'coin') {
-      const timingPulse = obj.hitTime ? Math.max(0, 1 - Math.abs(this.runTime - obj.hitTime) / RHYTHM_BEAT_WINDOW_MS) : 0;
+      const timingPulse = obj.hitTime ? Math.max(0, 1 - Math.abs(this.musicTime - obj.hitTime) / RHYTHM_BEAT_WINDOW_MS) : 0;
       const pulse = 1 + Math.sin(this.time.now / 115 + obj.z) * 0.08 + timingPulse * 0.35;
       let r = Math.max(4, (obj.hitTime ? 21 : 17.5) * sc * pulse);
       let cy = zTopY(z, obj.elev !== undefined ? obj.elev : 42);
@@ -1520,7 +1561,7 @@ class GameScene extends Phaser.Scene {
     let rhythmBonus = 0;
     let rhythmLabel = null;
     if (obj.hitTime) {
-      const timing = Math.abs(this.runTime - obj.hitTime);
+      const timing = Math.abs(this.musicTime - obj.hitTime);
       if (timing <= 70) { rhythmBonus = 35; rhythmLabel = 'Perfect beat!'; }
       else if (timing <= RHYTHM_BEAT_WINDOW_MS) { rhythmBonus = 18; rhythmLabel = 'Good beat'; }
       else { rhythmLabel = 'Off beat'; }
@@ -1629,11 +1670,12 @@ class GameScene extends Phaser.Scene {
     audio.gameOver();
 
     const finalScore = Math.floor(this.score);
-    const oldBest = loadNumber(STORAGE_KEYS.bestScore);
-    const oldCoins = loadNumber(STORAGE_KEYS.bestCoins);
+    const keys = bestKeys(this.rhythmMode);
+    const oldBest = loadNumber(keys.score);
+    const oldCoins = loadNumber(keys.coins);
     const newBest = finalScore > oldBest;
-    if (newBest) saveNumber(STORAGE_KEYS.bestScore, finalScore);
-    if (this.coinCount > oldCoins) saveNumber(STORAGE_KEYS.bestCoins, this.coinCount);
+    if (newBest) saveNumber(keys.score, finalScore);
+    if (this.coinCount > oldCoins) saveNumber(keys.coins, this.coinCount);
 
     // Crash impact: shake + flash first, the panel lands after a short beat
     this.cameras.main.shake(280, 0.014);
@@ -1647,7 +1689,7 @@ class GameScene extends Phaser.Scene {
       this.add.text(W / 2, H / 2 - 76, reason, { fontSize: '16px', fontFamily: 'Arial', fill: '#cfd8dc' }).setOrigin(0.5).setDepth(26);
       this.add.text(W / 2, H / 2 - 30, `Score: ${finalScore}${newBest ? '  NEW BEST!' : ''}`, { fontSize: '24px', fontFamily: 'Arial', fill: newBest ? '#b7ffb7' : '#fff' }).setOrigin(0.5).setDepth(26);
       this.add.text(W / 2, H / 2 + 5, `Coins: ${this.coinCount}`, { fontSize: '21px', fontFamily: 'Arial', fill: '#ffd700' }).setOrigin(0.5).setDepth(26);
-      this.add.text(W / 2, H / 2 + 34, bestSummary(), { fontSize: '15px', fontFamily: 'Arial', fill: '#9ecbff' }).setOrigin(0.5).setDepth(26);
+      this.add.text(W / 2, H / 2 + 34, bestSummary(this.rhythmMode), { fontSize: '15px', fontFamily: 'Arial', fill: '#9ecbff' }).setOrigin(0.5).setDepth(26);
 
       const restartBtn = this.add.rectangle(W / 2, H / 2 + 96, 200, 50, 0xff6b6b).setInteractive({ useHandCursor: true }).setDepth(26);
       const menuBtn = this.add.rectangle(W / 2, H / 2 + 154, 200, 38, 0x455a64).setInteractive({ useHandCursor: true }).setDepth(26);
@@ -1675,6 +1717,15 @@ class GameScene extends Phaser.Scene {
 
     const dt = delta / 1000;
     this.runTime += delta;
+    if (this.rhythmMode) {
+      // Beats follow the audio clock, not the game clock, so coins stay on
+      // the music. A backwards jump means the track restarted (pause/resume,
+      // late audio unlock) — drop scheduled beats and re-anchor.
+      const tt = audio.getTrackTime ? audio.getTrackTime() : null;
+      const newMusicTime = tt != null ? tt * 1000 : this.runTime;
+      if (newMusicTime < this.musicTime - RHYTHM_BEAT_MS) this._resyncRhythm(newMusicTime);
+      this.musicTime = newMusicTime;
+    }
     this.beatPulse = Math.max(0, this.beatPulse - dt * (this.rhythmMode ? 4.4 : 2.2));
     this.collectPulse = Math.max(0, this.collectPulse - dt * 5.8);
     this.playerBounce = Math.max(0, this.playerBounce - dt * 6.5);
@@ -1687,7 +1738,7 @@ class GameScene extends Phaser.Scene {
     this.score += SCORE_PER_SECOND * dt * (1 + Math.min(0.5, (this.combo - 1) * 0.08));
     this.scoreTxt.setText(String(Math.floor(this.score)));
     this.comboTxt.setText(`x${this.combo.toFixed(1)}`);
-    if (this.rhythmMode && this.beatTxt) this.beatTxt.setText(`${RHYTHM_BPM} BPM  •  BEAT ${Math.max(1, Math.floor(this.runTime / RHYTHM_BEAT_MS) + 1)}`);
+    if (this.rhythmMode && this.beatTxt) this.beatTxt.setText(`${RHYTHM_BPM} BPM  •  BEAT ${Math.max(1, Math.floor(this.musicTime / RHYTHM_BEAT_MS) + 1)}`);
     this.modeTxt.setText(this.rhythmMode ? 'RHYTHM RUN' : `LEVEL ${this.level}`);
     if (this.magnetTimer > 0) {
       this.magnetTimer = Math.max(0, this.magnetTimer - delta);
@@ -1735,7 +1786,7 @@ class GameScene extends Phaser.Scene {
       // Rhythm-timed objects are positioned purely from their beat time so they
       // always arrive at the player exactly on the downbeat.
       const prevZ = obj.z;
-      if (obj.rhythmTimed) obj.z = SPAWN_Z * (obj.hitTime - this.runTime) / RHYTHM_APPROACH_MS;
+      if (obj.rhythmTimed) obj.z = SPAWN_Z * (obj.hitTime - this.musicTime) / RHYTHM_APPROACH_MS;
       else obj.z -= this.speed * dt;
 
       // Magnet: nearby coins fly to the player instead of teleport-collecting
