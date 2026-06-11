@@ -37,6 +37,11 @@ jobs:
           for asset in ('version.js', 'src/main.js'):
               html = html.replace(f'src="{asset}"', f'src="{asset}?v={short_sha}"')
           index.write_text(html)
+
+          # Version the service worker cache so each deploy invalidates the last
+          sw = Path('sw.js')
+          sw.write_text(sw.read_text().replace("const APP_VERSION = 'local-dev';",
+                                               f"const APP_VERSION = '{short_sha}';"))
           PY
 
       - name: Deploy to gh-pages branch

@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#060c18" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <title>Sofia's Endless Runner</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; touch-action: none; -webkit-tap-highlight-color: transparent; }
@@ -29,5 +32,15 @@
   <script src="vendor/phaser.min.js"></script>
   <script src="version.js"></script>
   <script type="module" src="src/main.js"></script>
+  <script>
+    // Offline support on the deployed site; skipped locally so the dev
+    // server never serves stale cached modules.
+    if ('serviceWorker' in navigator &&
+        !['localhost', '127.0.0.1'].includes(location.hostname)) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(() => {});
+      });
+    }
+  </script>
 </body>
 </html>

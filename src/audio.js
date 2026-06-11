@@ -163,30 +163,65 @@ class AudioManager {
   }
 
 
-  // ── Rhythm Run music — simple beat-test loop, 128 BPM ─────────────────────
+  // ── Rhythm Run music — three tracks, layered by combo intensity ───────────
+  // The game registers an intensity callback (0–2); extra layers join at each
+  // 16-beat loop boundary so the music grows with the player's streak.
 
-  _scheduleRhythm(startTime) {
-    const BPM = 128, beat = 60 / BPM;
+  setIntensityCallback(fn) {
+    this._intensityFn = fn;
+  }
+
+  _intensity() {
+    return this._intensityFn ? this._intensityFn() : 2;
+  }
+
+  _scheduleRhythmCore(startTime, BPM, lead, bass) {
+    const beat = 60 / BPM;
     const len = 16 * beat;
+    const intensity = this._intensity();
 
-    // Bright lead marks every collectable beat.
-    const lead = [72, 72, 79, 76, 74, 76, 79, 83, 81, 79, 76, 74, 72, 74, 76, 79];
     lead.forEach((n, i) => {
+      if (n === null) return;
       this._note(n, startTime + i * beat, beat * 0.32, i % 4 === 0 ? 0.13 : 0.09, 'square');
     });
-
-    // Bass pulse keeps the rhythm easy to hear.
-    const bass = [48, 48, 43, 43, 45, 45, 47, 47, 48, 48, 43, 43, 45, 47, 48, 48];
     bass.forEach((n, i) => {
       this._note(n, startTime + i * beat, beat * 0.36, 0.12, 'sawtooth');
     });
 
-    // Drum grid: kick on downbeats, snare on 2 and 4, hats on eighth notes.
+    // Drum grid: kick on downbeats, snare on 2 and 4.
     [0, 4, 8, 12].forEach(i => this._kick(startTime + i * beat));
     [2, 6, 10, 14].forEach(i => this._snare(startTime + i * beat));
-    for (let i = 0; i < 32; i++) this._hat(startTime + i * beat * 0.5);
 
+    // Layer 1 (combo warm): hats on eighth notes.
+    if (intensity >= 1) {
+      for (let i = 0; i < 32; i++) this._hat(startTime + i * beat * 0.5);
+    }
+    // Layer 2 (combo hot): sparkling arp counter-melody an octave up.
+    if (intensity >= 2) {
+      lead.forEach((n, i) => {
+        if (n === null || i % 2 === 0) return;
+        this._note(n + 12, startTime + (i + 0.5) * beat, beat * 0.16, 0.05, 'triangle');
+      });
+    }
     return len;
+  }
+
+  _scheduleRhythmChill(startTime) {
+    return this._scheduleRhythmCore(startTime, 100,
+      [72, null, 76, null, 79, null, 76, null, 74, null, 77, null, 76, null, 72, null],
+      [48, 48, 45, 45, 43, 43, 45, 45, 48, 48, 45, 45, 43, 45, 47, 47]);
+  }
+
+  _scheduleRhythm(startTime) {
+    return this._scheduleRhythmCore(startTime, 128,
+      [72, 72, 79, 76, 74, 76, 79, 83, 81, 79, 76, 74, 72, 74, 76, 79],
+      [48, 48, 43, 43, 45, 45, 47, 47, 48, 48, 43, 43, 45, 47, 48, 48]);
+  }
+
+  _scheduleRhythmHyper(startTime) {
+    return this._scheduleRhythmCore(startTime, 152,
+      [76, 79, 83, 79, 84, 83, 79, 76, 78, 81, 84, 81, 86, 84, 81, 78],
+      [48, 48, 48, 43, 45, 45, 45, 40, 48, 48, 48, 43, 45, 47, 48, 50]);
   }
 
   _snare(t) {
@@ -263,8 +298,11 @@ class AudioManager {
     this._playTrack('game', this._scheduleGame);
   }
 
-  playRhythm() {
-    this._playTrack('rhythm', this._scheduleRhythm);
+  playRhythm(trackId = 'classic') {
+    const fn = trackId === 'chill' ? this._scheduleRhythmChill
+      : trackId === 'hyper' ? this._scheduleRhythmHyper
+      : this._scheduleRhythm;
+    this._playTrack(`rhythm-${trackId}`, fn);
   }
 
   stop() {
@@ -368,6 +406,24 @@ class AudioManager {
     osc.stop(t + 0.22);
   }
 
+  // Low double-thump while the chaser is close
+  heartbeat() {
+    if (!this._init()) return;
+    const ctx = this._ctx, t = ctx.currentTime;
+    [0, 0.18].forEach((off, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(58 - i * 6, t + off);
+      gain.gain.setValueAtTime(i ? 0.16 : 0.24, t + off);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + off + 0.14);
+      osc.connect(gain);
+      gain.connect(this._sfxGain);
+      osc.start(t + off);
+      osc.stop(t + off + 0.16);
+    });
+  }
+
   gameOver() {
     if (!this._init()) return;
     this.unlock();
@@ -392,6 +448,12 @@ class AudioManager {
     osc.stop(t + 1.15);
   }
 }
+
+export const RHYTHM_TRACK_INFO = {
+  chill:   { bpm: 100, label: 'CHILL',   color: 0x00897b },
+  classic: { bpm: 128, label: 'CLASSIC', color: 0x8e24aa },
+  hyper:   { bpm: 152, label: 'HYPER',   color: 0xd81b60 },
+};
 
 export const audio = new AudioManager();
 // Kept on window for console debugging.

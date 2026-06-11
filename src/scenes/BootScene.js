@@ -1,6 +1,7 @@
 import { W, H, STORAGE_KEYS, saveString, loadString, loadVolume, hapticsEnabled, bestSummary, appVersionLabel } from '../constants.js';
 import { setupHiDPI } from '../projection.js';
-import { audio, unlockAudio, setAudioMuted } from '../audio.js';
+import { audio, unlockAudio, setAudioMuted, RHYTHM_TRACK_INFO } from '../audio.js';
+import { OUTFITS, getWallet, spendFromWallet, ownedOutfits, ownOutfit, equippedOutfit, equipOutfit } from '../cosmetics.js';
 
 // ─── Boot / menu scene ────────────────────────────────────────────────────────
 export class BootScene extends Phaser.Scene {
@@ -46,10 +47,10 @@ export class BootScene extends Phaser.Scene {
     this.panel = this.add.container(0, 0).setDepth(10);
   }
 
-  _button(x, y, w, h, label, onPress, color = 0xff6b6b) {
+  _button(x, y, w, h, label, onPress, color = 0xff6b6b, fontSize = null) {
     const r = this.add.rectangle(x, y, w, h, color).setInteractive({ useHandCursor: true });
     const t = this.add.text(x, y, label, {
-      fontSize: h > 48 ? '24px' : '18px',
+      fontSize: `${fontSize || (h > 48 ? 24 : 18)}px`,
       fontFamily: 'Arial Black, Arial',
       fill: '#fff',
     }).setOrigin(0.5);
@@ -83,11 +84,12 @@ export class BootScene extends Phaser.Scene {
       fontSize: '15px', fontFamily: 'Arial', fill: '#d4e3ff', align: 'center', wordWrap: { width: 330 },
     }).setOrigin(0.5));
 
-    this._button(cx, cy + 48, 220, 52, 'PLAY', () => this._startRun(false));
-    this._button(cx, cy + 108, 220, 48, 'RHYTHM RUN', () => this._startRun(true), 0x8e24aa);
-    this._button(cx, cy + 164, 220, 40, 'HOW TO PLAY', () => this._showHowTo(), 0x3949ab);
-    this._button(cx, cy + 214, 220, 36, this.muted ? 'SOUND: OFF' : 'SOUND: ON', () => this._toggleSound(), 0x455a64);
-    this._button(cx, cy + 258, 220, 36, 'SETTINGS', () => this._showSettings(), 0x37474f);
+    this._button(cx, cy + 44, 220, 52, 'PLAY', () => this._startRun(false));
+    this._button(cx, cy + 100, 220, 44, 'RHYTHM RUN', () => this._showTrackPicker(), 0x8e24aa);
+    this._button(cx, cy + 150, 220, 40, `SHOP · ${getWallet()} ©`, () => this._showShop(), 0xff8f00);
+    this._button(cx, cy + 196, 220, 36, 'HOW TO PLAY', () => this._showHowTo(), 0x3949ab);
+    this._button(cx, cy + 238, 220, 32, this.muted ? 'SOUND: OFF' : 'SOUND: ON', () => this._toggleSound(), 0x455a64);
+    this._button(cx, cy + 276, 220, 32, 'SETTINGS', () => this._showSettings(), 0x37474f);
     this.panel.add(this.add.text(cx, H - 24, appVersionLabel(), {
       fontSize: '12px', fontFamily: 'Arial', fill: '#8fa7c7',
     }).setOrigin(0.5));
@@ -120,6 +122,79 @@ export class BootScene extends Phaser.Scene {
       saveString(STORAGE_KEYS.seenHelp, '1');
       this._showMenu();
     }, 0xff6b6b);
+  }
+
+  _showTrackPicker() {
+    this.mode = 'tracks';
+    this._clearPanel();
+    const cx = W / 2;
+    this.panel.add(this.add.rectangle(cx, H / 2, 350, 400, 0x000000, 0.8));
+    this.panel.add(this.add.text(cx, 195, 'RHYTHM RUN', {
+      fontSize: '28px', fontFamily: 'Arial Black, Arial', fill: '#ce93d8',
+    }).setOrigin(0.5));
+    this.panel.add(this.add.text(cx, 232, 'Pick your track', {
+      fontSize: '14px', fontFamily: 'Arial', fill: '#d4e3ff',
+    }).setOrigin(0.5));
+    Object.entries(RHYTHM_TRACK_INFO).forEach(([id, info], i) => {
+      this._button(cx, 290 + i * 62, 240, 50, `${info.label} · ${info.bpm} BPM`, () => this._startRun(true, id), info.color);
+    });
+    this._button(cx, 488, 180, 40, 'BACK', () => this._showMenu(), 0x455a64);
+  }
+
+  _showShop() {
+    this.mode = 'shop';
+    this._clearPanel();
+    const cx = W / 2;
+    this.panel.add(this.add.rectangle(cx, H / 2, 366, 560, 0x000000, 0.84));
+    this.panel.add(this.add.text(cx, 100, 'OUTFIT SHOP', {
+      fontSize: '26px', fontFamily: 'Arial Black, Arial', fill: '#ffd700',
+    }).setOrigin(0.5));
+    this.panel.add(this.add.text(cx, 130, `Wallet: ${getWallet()} coins`, {
+      fontSize: '15px', fontFamily: 'Arial', fill: '#ffe082',
+    }).setOrigin(0.5));
+
+    const owned = ownedOutfits();
+    const equipped = equippedOutfit().id;
+    OUTFITS.forEach((outfit, i) => {
+      const y = 178 + i * 62;
+      const p = outfit.palette;
+      // Mini preview drawn with the same primitives as the runner
+      const g = this.add.graphics();
+      g.fillStyle(p.legs, 1); g.fillRect(58 - 7, y + 4, 5, 12); g.fillRect(58 + 2, y + 4, 5, 12);
+      g.fillStyle(p.body, 1); g.fillRect(58 - 9, y - 10, 18, 16);
+      g.fillStyle(p.stripe, 1); g.fillRect(58 - 2, y - 10, 3, 16);
+      g.fillStyle(p.hair, 1); g.fillCircle(58, y - 16, 8);
+      g.fillStyle(p.bow, 1); g.fillTriangle(58 + 5, y - 22, 58 + 11, y - 19, 58 + 5, y - 16);
+      this.panel.add(g);
+
+      this.panel.add(this.add.text(100, y - 12, outfit.name, {
+        fontSize: '16px', fontFamily: 'Arial Black, Arial', fill: '#ffffff',
+      }).setOrigin(0, 0.5));
+      this.panel.add(this.add.text(100, y + 8, outfit.price ? `${outfit.price} coins` : 'Free', {
+        fontSize: '12px', fontFamily: 'Arial', fill: '#9ecbff',
+      }).setOrigin(0, 0.5));
+
+      const isOwned = owned.includes(outfit.id);
+      const isEquipped = outfit.id === equipped;
+      const label = isEquipped ? 'WEARING' : isOwned ? 'EQUIP' : 'BUY';
+      const color = isEquipped ? 0x2e7d32 : isOwned ? 0x3949ab : getWallet() >= outfit.price ? 0xff8f00 : 0x37474f;
+      this._button(W - 78, y, 92, 36, label, () => {
+        if (isEquipped) return;
+        if (isOwned) {
+          equipOutfit(outfit.id);
+          audio.powerUp();
+        } else if (spendFromWallet(outfit.price)) {
+          ownOutfit(outfit.id);
+          equipOutfit(outfit.id);
+          audio.powerUp();
+        } else {
+          audio.shieldBreak(); // can't afford
+        }
+        this._showShop();
+      }, color, 13);
+    });
+
+    this._button(cx, 178 + OUTFITS.length * 62 + 8, 180, 40, 'BACK', () => this._showMenu(), 0xff6b6b);
   }
 
   _showSettings() {
@@ -164,12 +239,12 @@ export class BootScene extends Phaser.Scene {
 
   _activatePrimary() {
     unlockAudio();
-    if (this.mode === 'help' || this.mode === 'settings') {
+    if (this.mode !== 'menu') {
       if (this.mode === 'help') saveString(STORAGE_KEYS.seenHelp, '1');
       this._showMenu();
       return;
     }
-    if (this.mode === 'menu') this._startRun(false);
+    this._startRun(false);
   }
 
   _toggleSound() {
@@ -180,12 +255,12 @@ export class BootScene extends Phaser.Scene {
     this._showMenu();
   }
 
-  _startRun(rhythmMode = false) {
+  _startRun(rhythmMode = false, rhythmTrack = 'classic') {
     unlockAudio();
     if (loadString(STORAGE_KEYS.seenHelp) !== '1') {
       saveString(STORAGE_KEYS.seenHelp, '1');
     }
     audio.stop();
-    this.scene.start('Game', { rhythmMode });
+    this.scene.start('Game', { rhythmMode, rhythmTrack });
   }
 }

@@ -44,6 +44,9 @@ export const STORAGE_KEYS = {
   musicVol: 'ser_music_vol_v1',
   sfxVol: 'ser_sfx_vol_v1',
   haptics: 'ser_haptics_v1',
+  totalCoins: 'ser_total_coins_v1',
+  outfitsOwned: 'ser_outfits_owned_v1',
+  outfitEquipped: 'ser_outfit_equipped_v1',
 };
 
 // ─── Persistent storage (guarded: private browsing may block localStorage) ────
@@ -64,8 +67,12 @@ export const loadNumber = (key) => Number(storage.getItem(key) || 0);
 export const saveString = (key, value) => storage.setItem(key, value);
 export const loadString = (key) => storage.getItem(key);
 
-export const bestKeys = (rhythm) => rhythm
-  ? { score: STORAGE_KEYS.bestScoreRhythm, coins: STORAGE_KEYS.bestCoinsRhythm }
+// Rhythm bests are tracked per track; 'classic' keeps the original keys.
+export const bestKeys = (rhythm, track = 'classic') => rhythm
+  ? {
+      score: STORAGE_KEYS.bestScoreRhythm + (track === 'classic' ? '' : `_${track}`),
+      coins: STORAGE_KEYS.bestCoinsRhythm + (track === 'classic' ? '' : `_${track}`),
+    }
   : { score: STORAGE_KEYS.bestScore, coins: STORAGE_KEYS.bestCoins };
 export const bestSummary = (rhythm = false) => {
   const k = bestKeys(rhythm);
