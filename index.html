@@ -25,9 +25,9 @@
 </head>
 <body>
   <div id="game-container"></div>
-  <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+  <!-- Phaser is vendored so the game works offline and never depends on a CDN -->
+  <script src="vendor/phaser.min.js"></script>
   <script src="version.js"></script>
-  <script src="audio.js"></script>
-  <script src="game.js"></script>
+  <script type="module" src="src/main.js"></script>
 </body>
 </html>

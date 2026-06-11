@@ -32,7 +32,9 @@ jobs:
           short_sha = os.environ['SHORT_SHA']
           index = Path('index.html')
           html = index.read_text()
-          for asset in ('version.js', 'audio.js', 'game.js'):
+          # Cache-bust the entry points. Module imports under src/ are not
+          # query-busted here; the service worker versions those by commit.
+          for asset in ('version.js', 'src/main.js'):
               html = html.replace(f'src="{asset}"', f'src="{asset}?v={short_sha}"')
           index.write_text(html)
           PY

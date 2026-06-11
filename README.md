@@ -42,11 +42,16 @@ The main menu shows `Version: ...` at the bottom of the screen. Locally this use
 
 ## Dev
 
-No build step. Edit `game.js`, `audio.js`, `version.js`, or `index.html` and refresh the browser.
+No build step — the game uses browser-native ES modules. Edit files under `src/` and refresh the browser (serve the folder over HTTP, e.g. `python3 -m http.server 8765`, since modules don't load from `file://`).
 
-Useful local checks:
+Layout:
 
-```bash
-node --check game.js
-node --check audio.js
-```
+- `src/main.js` — Phaser config + entry point
+- `src/constants.js` — tuning constants and persistent-storage helpers
+- `src/projection.js` — pseudo-3D camera math (z → screen)
+- `src/worlds.js` — world themes and scenery drawing
+- `src/audio.js` — procedural Web Audio music + SFX
+- `src/scenes/BootScene.js`, `src/scenes/GameScene.js` — menu and gameplay
+- `vendor/phaser.min.js` — vendored Phaser 3.60 (no CDN dependency)
+
+Optional syntax check (if Node is installed): `node --check src/scenes/GameScene.js` etc.

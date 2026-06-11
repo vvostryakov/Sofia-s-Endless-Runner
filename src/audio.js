@@ -378,4 +378,8 @@ class AudioManager {
   }
 }
 
-window.audio = new AudioManager();
+export const audio = new AudioManager();
+// Kept on window for console debugging.
+window.audio = audio;
+export const unlockAudio = () => audio.unlock();
+export const setAudioMuted = (muted) => audio.setMuted(muted);
