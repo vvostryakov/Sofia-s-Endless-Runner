@@ -1,255 +1,35 @@
-'use strict';
-
-// ─── Screen ───────────────────────────────────────────────────────────────────
-const W = 400, H = 700;
-// Render the framebuffer at device resolution (capped at 2x) and zoom the
-// camera so all logic keeps using the 400×700 logical space — sharp on retina.
-const DPR = Math.min(Math.max(window.devicePixelRatio || 1, 1), 2);
-const setupHiDPI = (scene) => {
-  const cam = scene.cameras.main;
-  cam.setZoom(DPR);
-  cam.centerOn(W / 2, H / 2);
-  return { x: cam.scrollX, y: cam.scrollY };
-};
-
-// ─── Worlds ───────────────────────────────────────────────────────────────────
-const WORLDS = [
-  { id:'jungle',  no:'01', name:'JUNGLE',     accent:0xb6ff3d, accentStr:'#b6ff3d',
-    sky:[0x0a2230,0x15485a,0x1e7a66],
-    grd:{ near:0x1c3a22, far:0x0c2416, tieA:0x2a5436, tieB:0x173020, edge:0x5ed06a, path:0x234a2c }},
-  { id:'savanna', no:'02', name:'SAVANNA',    accent:0xffb454, accentStr:'#ffb454',
-    sky:[0x311c52,0x8a4258,0xff9a4d],
-    grd:{ near:0x7a5a24, far:0x3a2a12, tieA:0x946e2a, tieB:0x5a4218, edge:0xffd27a, path:0x876326 }},
-  { id:'reef',   no:'03', name:'CORAL REEF', accent:0x2be0ff, accentStr:'#2be0ff',
-    sky:[0x1c72c0,0x0e4a86,0x072a4e],
-    grd:{ near:0x15566e, far:0x082238, tieA:0x1e6e84, tieB:0x103c4e, edge:0x7df0ff, path:0x185a70 }},
-  { id:'deep',   no:'04', name:'DEEP OCEAN', accent:0xb14dff, accentStr:'#b14dff',
-    sky:[0x101a48,0x0a0e2a,0x05061a],
-    grd:{ near:0x181442, far:0x080a22, tieA:0x241c56, tieB:0x130e30, edge:0xc98aff, path:0x1c1648 }},
-];
-const WORLD_SCORE = 4000;
-
-// ─── Perspective ──────────────────────────────────────────────────────────────
-// True pseudo-3D camera (Subway Surfers style): every object lives at a world
-// depth z — world units ahead of the player, where 1 wu ≈ 1 px at the player
-// plane. Projection scale is FOCAL / (FOCAL + z), so things drift in slowly at
-// the horizon and sweep past the camera with real perspective acceleration.
-const VP_X          = W / 2;
-const NEAR_Y        = 540;
-const HORIZON_Y     = 275;
-const SPAWN_Z       = 1600;
-const FOCAL         = 320;
-const TRACK_NEAR_HW = 145;
-const COLLECTION_RADIUS = 64;
-const PLAYER_ANCHOR_Y = NEAR_Y;
-const PLAYER_DRAW_SCALE = 1.18;
-const PLAYER_VISUAL_LIFT = 46;   // feet sit on the ground plane at NEAR_Y
-const TIE_SPACING   = 150;
-
-const zT    = z => FOCAL / (FOCAL + Math.max(-FOCAL * 0.5, z)); // 1 at player → 0 far
-const zY    = z => HORIZON_Y + (NEAR_Y - HORIZON_Y) * zT(z);
-const zSc   = z => Math.max(0.06, zT(z));
-const zTopY = (z, h) => zY(z) - h * zSc(z);
-
-// ─── MVP tuning ───────────────────────────────────────────────────────────────
-const JUMP_INIT = 465;
-const GRAVITY   = 900;
-const WAGON_TOP = 72;
-const WAGON_LENGTH = 330;
-const WAGON_LANDING_GRACE = 50;
-const WAGON_RIDE_MIN_MS = 1150;
-const WAGON_RIDE_MAX_MS = 2200;
-const BASE_SPEED = 480;   // world units / s
-const MAX_SPEED = 1080;
-const TOUCH_THRESHOLD = 22;
-const SCORE_PER_SECOND = 15;
-const COIN_SCORE = 20;
-const SHIELD_SCORE = 50;
-const MAGNET_SCORE = 40;
-const SLIDE_DURATION = 620;
-const MAGNET_DURATION = 7600;
-const DOUBLE_JUMP_INIT = 370;
-const SAFE_START_MS = 1300;
-const RHYTHM_BPM = 128;
-const RHYTHM_BEAT_MS = 60000 / RHYTHM_BPM;
-const RHYTHM_APPROACH_BEATS = 6;
-const RHYTHM_APPROACH_MS = RHYTHM_BEAT_MS * RHYTHM_APPROACH_BEATS;
-const RHYTHM_BEAT_WINDOW_MS = 160;
-const RHYTHM_LANES = [1, 1, 2, 1, 0, 1, 2, 2, 1, 0, 0, 1, 2, 1, 0, 1];
-const TURN_MAX_OFFSET = 34;
-const TURN_NEAR_FACTOR = 0.05;
-const TURN_CHANGE_MIN_MS = 2400;
-const TURN_CHANGE_MAX_MS = 4300;
-const LANE_SIDE = [-1, 0, 1];
-const STORAGE_KEYS = {
-  bestScore: 'ser_best_score_v1',
-  bestCoins: 'ser_best_coins_v1',
-  muted: 'ser_muted_v1',
-  seenHelp: 'ser_seen_help_v1',
-};
-
-const saveNumber = (key, value) => localStorage.setItem(key, String(Math.max(0, Math.floor(value))));
-const loadNumber = (key) => Number(localStorage.getItem(key) || 0);
-const unlockAudio = () => {
-  if (window.audio && typeof audio.unlock === 'function') audio.unlock();
-};
-const setAudioMuted = (muted) => {
-  if (window.audio && typeof audio.setMuted === 'function') audio.setMuted(muted);
-};
-const bestSummary = () => `Best: ${loadNumber(STORAGE_KEYS.bestScore)} · Coins: ${loadNumber(STORAGE_KEYS.bestCoins)}`;
-const appVersionLabel = () => {
-  const version = window.APP_VERSION || {};
-  return `Version: ${version.label || version.commit || 'local-dev'}`;
-};
-
-// ─── Boot / menu scene ────────────────────────────────────────────────────────
-class BootScene extends Phaser.Scene {
-  constructor() { super('Boot'); }
-
-  create() {
-    setupHiDPI(this);
-    this.muted = localStorage.getItem(STORAGE_KEYS.muted) === '1';
-    setAudioMuted(this.muted);
-    this._buildBackground();
-    this._showMenu();
-
-    const startMusic = () => {
-      unlockAudio();
-      if (!this.muted) audio.playMenu();
-    };
-    this.input.once('pointerdown', startMusic);
-    this.input.keyboard.once('keydown', startMusic);
-    document.addEventListener('touchend', unlockAudio, { once: true, passive: true });
-    document.addEventListener('click', unlockAudio, { once: true, passive: true });
-    this.input.keyboard.on('keydown-SPACE', () => this._activatePrimary());
-    this.input.keyboard.on('keydown-ENTER', () => this._activatePrimary());
-  }
-
-  _buildBackground() {
-    const sky = this.add.graphics();
-    sky.fillGradientStyle(0x070d1a, 0x070d1a, 0x132038, 0x132038, 1);
-    sky.fillRect(0, 0, W, H);
-    for (let i = 0; i < 60; i++) {
-      this.add.circle(
-        Phaser.Math.Between(0, W), Phaser.Math.Between(0, 320),
-        Math.random() < 0.25 ? 2 : 1, 0xffffff
-      ).setAlpha(Phaser.Math.FloatBetween(0.15, 0.9));
-    }
-    this.add.circle(315, 55, 28, 0xfff9c4).setAlpha(0.9);
-    this.add.circle(304, 47, 22, 0x132038).setAlpha(0.5);
-  }
-
-  _clearPanel() {
-    if (this.panel) this.panel.destroy(true);
-    this.panel = this.add.container(0, 0).setDepth(10);
-  }
-
-  _button(x, y, w, h, label, onPress, color = 0xff6b6b) {
-    const r = this.add.rectangle(x, y, w, h, color).setInteractive({ useHandCursor: true });
-    const t = this.add.text(x, y, label, {
-      fontSize: h > 48 ? '24px' : '18px',
-      fontFamily: 'Arial Black, Arial',
-      fill: '#fff',
-    }).setOrigin(0.5);
-    r.on('pointerdown', () => {
-      unlockAudio();
-      onPress();
-    });
-    this.panel.add([r, t]);
-    return r;
-  }
-
-  _showMenu() {
-    this.mode = 'menu';
-    this._clearPanel();
-    const cx = W / 2, cy = H / 2;
-
-    this.panel.add(this.add.text(cx, cy - 178, "Sofia's", {
-      fontSize: '52px', fontFamily: 'Arial Black, Arial',
-      fill: '#ffd700', stroke: '#b8860b', strokeThickness: 6,
-    }).setOrigin(0.5));
-    this.panel.add(this.add.text(cx, cy - 112, 'Endless Runner', {
-      fontSize: '28px', fontFamily: 'Arial', fill: '#fff', stroke: '#000', strokeThickness: 4,
-    }).setOrigin(0.5));
-    this.panel.add(this.add.text(cx, cy - 58, bestSummary(), {
-      fontSize: '18px', fontFamily: 'Arial', fill: '#b7e4ff',
-    }).setOrigin(0.5));
-    this.panel.add(this.add.text(cx, cy - 12, 'Three lanes. Jump, double-jump, slide, chain combos, and grab power-ups — or try Rhythm Run.', {
-      fontSize: '15px', fontFamily: 'Arial', fill: '#d4e3ff', align: 'center', wordWrap: { width: 330 },
-    }).setOrigin(0.5));
-
-    this._button(cx, cy + 48, 220, 52, 'PLAY', () => this._startRun(false));
-    this._button(cx, cy + 108, 220, 48, 'RHYTHM RUN', () => this._startRun(true), 0x8e24aa);
-    this._button(cx, cy + 164, 220, 40, 'HOW TO PLAY', () => this._showHowTo(), 0x3949ab);
-    this._button(cx, cy + 214, 220, 36, this.muted ? 'SOUND: OFF' : 'SOUND: ON', () => this._toggleSound(), 0x455a64);
-    this.panel.add(this.add.text(cx, H - 24, appVersionLabel(), {
-      fontSize: '12px', fontFamily: 'Arial', fill: '#8fa7c7',
-    }).setOrigin(0.5));
-
-  }
-
-  _showHowTo() {
-    this.mode = 'help';
-    this._clearPanel();
-    const cx = W / 2;
-    this.panel.add(this.add.rectangle(cx, H / 2, 350, 420, 0x000000, 0.78));
-    this.panel.add(this.add.text(cx, 164, 'HOW TO PLAY', {
-      fontSize: '30px', fontFamily: 'Arial Black, Arial', fill: '#ffd700',
-    }).setOrigin(0.5));
-    this.panel.add(this.add.text(cx, 270,
-      'Keyboard\n' +
-      '← / A and → / D: switch lanes\n' +
-      '↑ / W / Space: jump / double-jump\n' +
-      '↓ / S: slide or fast-drop\n' +
-      'P or Esc: pause\n\n' +
-      'Touch\n' +
-      'Swipe left/right to switch lanes.\n' +
-      'Swipe up to jump, swipe down to slide. Tap pause when you need a break.\n\n' +
-      'Goal\n' +
-      'Survive as long as possible. Jump crates, slide under red gates, collect coin trails, and land on wagons to build combos. Blue shields block one crash; purple magnets pull nearby coins. In Rhythm Run, glowing beat coins arrive on the downbeat: collect them near the pulse for Perfect/Good bonuses.', {
-      fontSize: '16px', fontFamily: 'Arial', fill: '#ffffff', align: 'center',
-      lineSpacing: 8, wordWrap: { width: 310 },
-    }).setOrigin(0.5));
-    this._button(cx, 510, 180, 48, 'GOT IT', () => {
-      localStorage.setItem(STORAGE_KEYS.seenHelp, '1');
-      this._showMenu();
-    }, 0xff6b6b);
-  }
-
-  _activatePrimary() {
-    unlockAudio();
-    if (this.mode === 'help') {
-      localStorage.setItem(STORAGE_KEYS.seenHelp, '1');
-      this._showMenu();
-      return;
-    }
-    if (this.mode === 'menu') this._startRun(false);
-  }
-
-  _toggleSound() {
-    this.muted = !this.muted;
-    localStorage.setItem(STORAGE_KEYS.muted, this.muted ? '1' : '0');
-    setAudioMuted(this.muted);
-    if (!this.muted) audio.playMenu();
-    this._showMenu();
-  }
-
-  _startRun(rhythmMode = false) {
-    unlockAudio();
-    if (localStorage.getItem(STORAGE_KEYS.seenHelp) !== '1') {
-      localStorage.setItem(STORAGE_KEYS.seenHelp, '1');
-    }
-    audio.stop();
-    this.scene.start('Game', { rhythmMode });
-  }
-}
+import {
+  W, H, DPR,
+  JUMP_INIT, GRAVITY, WAGON_TOP, WAGON_LENGTH, WAGON_LANDING_GRACE,
+  WAGON_RIDE_MIN_MS, WAGON_RIDE_MAX_MS, BASE_SPEED, MAX_SPEED, TOUCH_THRESHOLD,
+  SCORE_PER_SECOND, COIN_SCORE, SHIELD_SCORE, MAGNET_SCORE, SLIDE_DURATION,
+  MAGNET_DURATION, DOUBLE_JUMP_INIT, SAFE_START_MS,
+  RHYTHM_APPROACH_BEATS, RHYTHM_BEAT_WINDOW_MS, RHYTHM_LANES,
+  TURN_MAX_OFFSET, TURN_NEAR_FACTOR, TURN_CHANGE_MIN_MS, TURN_CHANGE_MAX_MS,
+  LANE_SIDE, STORAGE_KEYS, saveNumber, loadNumber, bestKeys, bestSummary, vibrate,
+} from '../constants.js';
+import {
+  setupHiDPI, VP_X, NEAR_Y, HORIZON_Y, SPAWN_Z, TRACK_NEAR_HW,
+  COLLECTION_RADIUS, PLAYER_ANCHOR_Y, PLAYER_DRAW_SCALE, PLAYER_VISUAL_LIFT,
+  TIE_SPACING, zT, zY, zSc, zTopY,
+} from '../projection.js';
+import {
+  WORLDS, WORLD_SCORE, bdJungle, bdSavanna, bdReef, bdDeep,
+  drawWorldWall, drawWorldScenery,
+} from '../worlds.js';
+import { audio, unlockAudio, RHYTHM_TRACK_INFO } from '../audio.js';
+import { equippedOutfit, addToWallet } from '../cosmetics.js';
 
 // ─── Game scene ───────────────────────────────────────────────────────────────
-class GameScene extends Phaser.Scene {
+export class GameScene extends Phaser.Scene {
   constructor() { super('Game'); }
 
   init(data = {}) {
     this.rhythmMode = data.rhythmMode === true;
+    this.rhythmTrack = RHYTHM_TRACK_INFO[data.rhythmTrack] ? data.rhythmTrack : 'classic';
+    this.rhythmBpm = RHYTHM_TRACK_INFO[this.rhythmTrack].bpm;
+    this.beatMs = 60000 / this.rhythmBpm;
+    this.approachMs = this.beatMs * RHYTHM_APPROACH_BEATS;
   }
 
   create() {
@@ -284,6 +64,10 @@ class GameScene extends Phaser.Scene {
     this.shieldCharges = 0;
     this.magnetTimer = 0;
     this.slideTimer = 0;
+    this.slideHoldMs = 0;
+    this._slideTouchHold = false;
+    this._touchHeld = false;
+    this.inputBuffer = null;
     this.jumpsUsed = 0;
     this.level = 1;
     this.trackTurn = 0;
@@ -292,6 +76,10 @@ class GameScene extends Phaser.Scene {
     this.turnSway = 0;
     this.nextRhythmBeat = RHYTHM_APPROACH_BEATS;
     this.lastBeatPulse = -1;
+    this.musicTime = 0;
+    this.rhythmStats = { perfect: 0, good: 0, off: 0, miss: 0 };
+    this.chaseT = 0;
+    this._lastHeartbeat = 0;
     this.beatPulse = 0;
     this.collectPulse = 0;
     this.playerBounce = 0;
@@ -304,6 +92,7 @@ class GameScene extends Phaser.Scene {
     this.rideTimer = 0;
 
     this.gameObjs = [];
+    this._pools = { gfx: [], circle: [], ellipse: [], rect: [] };
 
     this._buildBg();
     this._buildWorldLayer();
@@ -315,9 +104,28 @@ class GameScene extends Phaser.Scene {
     this._buildControls();
     if (!this.rhythmMode) this._scheduleNextSpawn(900);
 
-    if (this.rhythmMode) audio.playRhythm();
-    else audio.playGame();
+    this.chaserG = this.add.graphics().setDepth(6.4);
+    if (this.rhythmMode) {
+      // Music layers follow the combo: hats join warm, the arp joins hot
+      audio.setIntensityCallback(() => (this.combo >= 4 ? 2 : this.combo >= 2 ? 1 : 0));
+      audio.playRhythm(this.rhythmTrack);
+    } else {
+      audio.playGame();
+    }
     this._showCountdown();
+
+    // Auto-pause when the tab is hidden or the window loses focus
+    this._onVisibility = () => {
+      if (document.hidden && this.alive && !this.pausedRun) this._togglePause();
+    };
+    this._onBlur = () => { if (this.alive && !this.pausedRun) this._togglePause(); };
+    document.addEventListener('visibilitychange', this._onVisibility);
+    window.addEventListener('blur', this._onBlur);
+    this.events.once('shutdown', () => {
+      document.removeEventListener('visibilitychange', this._onVisibility);
+      window.removeEventListener('blur', this._onBlur);
+      audio.setIntensityCallback(null);
+    });
   }
 
   // ── World visual layer (backdrop + scenery, rebuilt on world change) ─────────
@@ -342,53 +150,10 @@ class GameScene extends Phaser.Scene {
     g.fillGradientStyle(w.sky[1],w.sky[1],w.sky[2],w.sky[2],1);
     g.fillRect(-60,mid,W+120,H-mid);
 
-    if      (w.id==='jungle')  this._bdJungle(g,w);
-    else if (w.id==='savanna') this._bdSavanna(g,w);
-    else if (w.id==='reef')    this._bdReef(g,w);
-    else                       this._bdDeep(g,w);
-  }
-
-  _bdJungle(g,w) {
-    for(let i=0;i<38;i++){ g.fillStyle(0xffffff,0.15+Math.random()*0.65); g.fillRect(Math.random()*W,Math.random()*(HORIZON_Y-10),1,1); }
-    g.fillStyle(0xeaf6ff,0.9); g.fillCircle(310,52,27);
-    g.fillStyle(w.sky[0],0.7); g.fillCircle(300,46,22);
-    g.fillStyle(0x0c2016,0.6); for(let i=-2;i<11;i++) g.fillEllipse(i*50+14,HORIZON_Y-4,56,(28+Math.abs(i)%3*12)*2);
-    g.fillStyle(0x0c2a22,0.9);
-    g.fillPoints([{x:56,y:HORIZON_Y},{x:56,y:HORIZON_Y-46},{x:68,y:HORIZON_Y-46},{x:68,y:HORIZON_Y-62},{x:86,y:HORIZON_Y-62},{x:86,y:HORIZON_Y-46},{x:98,y:HORIZON_Y-46},{x:98,y:HORIZON_Y}],true);
-    g.fillStyle(0x0a1c14,1); for(let i=0;i<14;i++) g.fillEllipse(i*30+14,-4,36,(18+i%3*10)*2);
-    g.lineStyle(2,w.accent,0.12); for(let i=0;i<7;i++) g.strokeCircle(i*60+14,0,22+i%2*10);
-    g.fillStyle(0x0c2018,0.92); for(let i=-3;i<20;i++) g.fillEllipse(i*26+13,HORIZON_Y-((22+Math.abs(i)*17%24)*0.5)+2,26,(22+Math.abs(i)*17%24)*2);
-    g.fillStyle(w.accent,0.5); for(let i=0;i<12;i++) g.fillCircle(30+i*28+(i%3)*12,40+i*12+(i%4)*8,1.5);
-  }
-
-  _bdSavanna(g,w) {
-    g.fillStyle(0xffe6a0,1); g.fillCircle(W/2,HORIZON_Y*0.42,52);
-    g.fillStyle(0xff9a4d,0.85); g.fillCircle(W/2,HORIZON_Y*0.42,40);
-    g.lineStyle(3,0xff9a4d,0.1); g.strokeCircle(W/2,HORIZON_Y*0.42,72);
-    g.fillStyle(0x3a1f3e,0.7); g.fillEllipse(W/2,HORIZON_Y+5,460,78);
-    [[58,HORIZON_Y-28,5,26],[292,HORIZON_Y-24,5,22],[162,HORIZON_Y-16,4,18]].forEach(([ax,ay,tw,th])=>{
-      g.fillStyle(0x120c1c,1); g.fillRect(ax-tw/2,ay,tw,th); g.fillEllipse(ax,ay-5,48,11);
-    });
-    [[0.23,0.18],[0.31,0.23],[0.69,0.16]].forEach(([bx,by])=>{
-      g.lineStyle(2,0x1a102088,0.6); const px=bx*W,py=by*HORIZON_Y;
-      g.beginPath(); g.moveTo(px-7,py); g.lineTo(px,py-4); g.lineTo(px+7,py); g.strokePath();
-    });
-  }
-
-  _bdReef(g,w) {
-    g.fillStyle(0xbfebff,0.5); g.fillRect(0,0,W,6);
-    g.lineStyle(2,0x7df0ff,0.5); for(let i=0;i<20;i++){ g.beginPath(); g.moveTo(i*22,3); g.lineTo(i*22+(10+(i*7)%12),3); g.strokePath(); }
-    const rots=[-12,-4,5,14,24];
-    for(let i=0;i<5;i++){ g.fillStyle(0x2be0ff,0.05); const cx=40+i*70,r=rots[i]*Math.PI/180; g.beginPath(); g.moveTo(cx,0); g.lineTo(cx+Math.sin(r)*HORIZON_Y*1.6+10,HORIZON_Y*1.6); g.lineTo(cx+Math.sin(r)*HORIZON_Y*1.6+50,HORIZON_Y*1.6); g.lineTo(cx+40,0); g.closePath(); g.fillPath(); }
-    g.fillStyle(0x0a2e4c,0.72); for(let i=-2;i<11;i++) g.fillEllipse(i*46+4+16,HORIZON_Y+1,32,(12+(Math.abs(i)%3)*14)*2);
-    g.fillStyle(0x2be0ff,0.3); for(let i=0;i<20;i++) g.fillCircle(15+i*19+(i%4)*11,10+(i*23)%HORIZON_Y,1+(i%3));
-  }
-
-  _bdDeep(g,w) {
-    for(let i=0;i<44;i++){ const c=i%2===0?0xb14dff:0x2be0ff; g.fillStyle(c,0.12+0.5*(i%5)/4); g.fillCircle((i*97+13)%W,(i*53+7)%(HORIZON_Y-10),i%5===0?2:1); }
-    [[0.22,0xb14dff],[0.54,0x2be0ff],[0.80,0xb14dff]].forEach(([bx,bc])=>{ g.fillStyle(bc,0.08); g.fillCircle(bx*W,HORIZON_Y+5,58); });
-    for(let i=0;i<4;i++){ g.fillStyle(0xb14dff,0.04); const cx=50+i*100; g.beginPath(); g.moveTo(cx,0); g.lineTo(cx+30,HORIZON_Y); g.lineTo(cx+52,HORIZON_Y); g.lineTo(cx+22,0); g.closePath(); g.fillPath(); }
-    g.fillStyle(0x1c1448,0.85); for(let i=-2;i<14;i++) g.fillTriangle(i*36-8+9,HORIZON_Y-16-(Math.abs(i)%4)*14,i*36-8,HORIZON_Y+2,i*36-8+18,HORIZON_Y+2);
+    if      (w.id==='jungle')  bdJungle(g, w);
+    else if (w.id==='savanna') bdSavanna(g, w);
+    else if (w.id==='reef')    bdReef(g, w);
+    else                       bdDeep(g, w);
   }
 
   _buildWorldScenery(w) {
@@ -432,70 +197,13 @@ class GameScene extends Phaser.Scene {
       s.gfx.clear();
       if(s.kind==='wall'){
         const sideX = this._curveCenterX(t) + s.side * (hw + (7 + s.jitter*8) * sc);
-        this._drawWorldWall(s.gfx,w,sideX,y,sc,s.side,s.jitter);
+        drawWorldWall(s.gfx,w,sideX,y,sc,s.side,s.jitter);
         s.gfx.setDepth(3.6+t*0.1);
       } else {
         const sideX = this._curveCenterX(t) + s.side * (hw + (24 + s.jitter*36) * sc);
-        this._drawWorldScenery(s.gfx,w,sideX,y,sc,s.side,t);
+        drawWorldScenery(s.gfx,w,sideX,y,sc,s.side,t);
         s.gfx.setDepth(3.8+t*0.1);
       }
-    }
-  }
-
-  _drawWorldWall(g,w,x,y,sc,side,jitter) {
-    // Small repeating edge filler, one per world theme
-    if(w.id==='jungle'){
-      g.fillStyle(0x14301c,0.95);
-      g.fillEllipse(x,y-5*sc,Math.round(26*sc),Math.round(16*sc));
-      g.fillEllipse(x+side*9*sc,y-2*sc,Math.round(18*sc),Math.round(11*sc));
-      g.fillStyle(w.accent,0.2); g.fillCircle(x-side*4*sc,y-9*sc,Math.max(1,2*sc));
-    } else if(w.id==='savanna'){
-      g.fillStyle(0x4a3617,0.95);
-      g.fillEllipse(x,y-3*sc,Math.round(20*sc),Math.round(10*sc));
-      g.fillStyle(0x6d5422,0.9);
-      for(let j=-1;j<=1;j++) g.fillRect(x+j*5*sc-1*sc,y-11*sc,Math.max(1,1.6*sc),Math.round(9*sc));
-    } else if(w.id==='reef'){
-      g.fillStyle(0x0f4a60,0.95);
-      g.fillEllipse(x,y-4*sc,Math.round(22*sc),Math.round(13*sc));
-      g.fillStyle(jitter>0.5?0xff3dae:0x2be0ff,0.5);
-      g.fillCircle(x+side*5*sc,y-9*sc,Math.max(1,2.5*sc));
-    } else {
-      g.fillStyle(0x191244,0.95);
-      g.fillRect(x-5*sc,y-14*sc,Math.round(10*sc),Math.round(14*sc));
-      g.fillStyle(w.accent,0.3); g.fillRect(x-3*sc,y-11*sc,Math.max(1,2*sc),Math.max(1,2*sc));
-    }
-  }
-
-  _drawWorldScenery(g,w,x,y,sc,side,t) {
-    if(w.id==='jungle'){
-      const tH=Math.round(48*sc),tW=Math.max(2,Math.round(6*sc));
-      g.fillStyle(0x2d1a0e,1); g.fillRect(x-tW/2,y-tH,tW,tH);
-      const cr=Math.round(22*sc);
-      g.fillStyle(0x0c2018,1); g.fillCircle(x,y-tH,cr);
-      g.fillStyle(0x1a3820,0.7); g.fillCircle(x-cr*0.4,y-tH-cr*0.25,cr*0.6);
-      g.fillStyle(w.accent,0.14); g.fillCircle(x,y-tH-cr*0.4,cr*0.38);
-      if(t>0.3){ g.fillStyle(0x1c4028,1); g.fillTriangle(x+side*4*sc,y,x-side*2*sc,y-12*sc,x+side*12*sc,y-6*sc); }
-    } else if(w.id==='savanna'){
-      const tH=Math.round(44*sc),tW=Math.max(2,Math.round(5*sc));
-      g.fillStyle(0x2a1a08,1); g.fillRect(x-tW/2,y-tH,tW,tH);
-      g.fillStyle(0x120c1c,1); g.fillEllipse(x,y-tH+2,Math.round(52*sc),Math.round(11*sc));
-      g.fillStyle(0x5a4218,0.9); for(let j=-2;j<=2;j++) g.fillRect(x+j*5*sc,y-4*sc,Math.max(1,2*sc),Math.round(6*sc));
-      if(t>0.45&&t<0.82){ g.fillStyle(0x3a2a14,1); g.fillEllipse(x+side*15*sc,y,Math.round(16*sc),Math.round(9*sc)); }
-    } else if(w.id==='reef'){
-      const ch=Math.round(32*sc);
-      g.lineStyle(Math.max(1.5,3.5*sc),0xff3dae,0.9); g.beginPath(); g.moveTo(x,y); g.lineTo(x,y-ch); g.strokePath();
-      g.lineStyle(Math.max(1,2*sc),0xff3dae,0.75);
-      g.beginPath(); g.moveTo(x,y-ch*0.4); g.lineTo(x-9*sc,y-ch*0.72); g.strokePath();
-      g.beginPath(); g.moveTo(x,y-ch*0.55); g.lineTo(x+7*sc,y-ch*0.82); g.strokePath();
-      g.fillStyle(0x2be0ff,0.9); g.fillCircle(x,y-ch,Math.max(2,3.5*sc)); g.fillCircle(x-9*sc,y-ch*0.72,Math.max(1.5,2.5*sc)); g.fillCircle(x+7*sc,y-ch*0.82,Math.max(1.5,2.5*sc));
-      if(t<0.65){ g.lineStyle(Math.max(1,2*sc),0x185a70,0.82); g.beginPath(); for(let s2=0;s2<=5;s2++){ const ky=y-s2*8*sc,kxo=(x+side*11*sc)+Math.sin(s2*1.1)*4*sc; s2===0?g.moveTo(kxo,ky):g.lineTo(kxo,ky); } g.strokePath(); }
-      g.lineStyle(1,0x7df0ff,0.35); g.strokeCircle(x+side*5*sc,y-ch*0.45,Math.max(2,2.5*sc));
-    } else {
-      const sh=Math.round(54*sc);
-      g.fillStyle(0x241c56,1); g.fillTriangle(x,y-sh,x-Math.round(8*sc),y,x+Math.round(8*sc),y);
-      g.fillStyle(w.accent,0.55); g.fillCircle(x,y-sh,Math.max(2,3.5*sc));
-      g.lineStyle(1,w.accent,0.25); g.strokeCircle(x,y-sh,Math.max(3,6*sc));
-      if(t>0.35){ const ar=Math.round(8*sc),ax=x+side*16*sc,ay=y-ar; g.fillStyle(0x3a1f6e,1); g.fillCircle(ax,ay,ar); g.lineStyle(Math.max(1,1.5*sc),w.accent,0.6); for(let j=0;j<5;j++){ const ang=j/5*Math.PI-0.05; g.beginPath(); g.moveTo(ax,ay); g.lineTo(ax+Math.cos(ang)*ar*1.5,ay-Math.sin(ang)*ar*1.5); g.strokePath(); } }
     }
   }
 
@@ -539,8 +247,10 @@ class GameScene extends Phaser.Scene {
   }
 
   _laneXZ(lane, z) {
+    // (lane - 1) === LANE_SIDE[lane] for whole lanes, and supports fractional
+    // lanes for drifting obstacles.
     const t = zT(z);
-    return this._curveCenterX(t) + LANE_SIDE[lane] * this._trackHalfWidth(t) * 0.667;
+    return this._curveCenterX(t) + (lane - 1) * this._trackHalfWidth(t) * 0.667;
   }
 
   _updateTrackCurve(delta) {
@@ -579,11 +289,14 @@ class GameScene extends Phaser.Scene {
     this.landSquash = 1;
     this._dustPuff(this.pX, PLAYER_ANCHOR_Y + 2);
     audio.land();
+    this._consumeBufferedInput();
   }
 
   _dustPuff(x, y, n = 6) {
     for (let i = 0; i < n; i++) {
-      const puff = this.add.circle(x + Phaser.Math.FloatBetween(-14, 14), y, Phaser.Math.FloatBetween(2.5, 5), 0xcfd8dc, 0.4).setDepth(6.5);
+      const puff = this._pCircle(0xcfd8dc, 0.4, 6.5)
+        .setPosition(x + Phaser.Math.FloatBetween(-14, 14), y)
+        .setRadius(Phaser.Math.FloatBetween(2.5, 5));
       this.tweens.add({
         targets: puff,
         x: puff.x + Phaser.Math.FloatBetween(-26, 26),
@@ -592,7 +305,7 @@ class GameScene extends Phaser.Scene {
         alpha: 0,
         duration: Phaser.Math.Between(240, 420),
         ease: 'Quad.easeOut',
-        onComplete: () => puff.destroy(),
+        onComplete: () => this._releaseObj(puff),
       });
     }
   }
@@ -746,24 +459,25 @@ class GameScene extends Phaser.Scene {
 
   _buildPlayer() {
     const d = 7;
+    const pal = equippedOutfit().palette;
     this.shadow = this.add.ellipse(this._laneXZ(1, 0), NEAR_Y + 4, 48, 16, 0x000000).setAlpha(0.5).setDepth(d - 1);
     this.vis = {
       aura: this.add.ellipse(0, 0, 58, 82, 0xffa726, 0).setDepth(d - 0.45),
-      collectTrail: this.add.ellipse(0, 0, 86, 20, 0x00e5ff, 0.08).setDepth(d - 0.6),
-      armL: this.add.rectangle(0, 0, 9, 24, 0xe91e8c).setDepth(d - 0.2),
-      armR: this.add.rectangle(0, 0, 9, 24, 0xe91e8c).setDepth(d - 0.2),
-      legL: this.add.rectangle(0, 0, 13, 26, 0x1565c0).setDepth(d),
-      legR: this.add.rectangle(0, 0, 13, 26, 0x1565c0).setDepth(d),
-      body: this.add.rectangle(0, 0, 34, 36, 0xe91e8c).setDepth(d + 0.1),
-      backStripe: this.add.rectangle(0, 0, 5, 28, 0xff9bd0).setDepth(d + 0.2),
+      collectTrail: this.add.ellipse(0, 0, 86, 20, pal.trail, 0.08).setDepth(d - 0.6),
+      armL: this.add.rectangle(0, 0, 9, 24, pal.arms).setDepth(d - 0.2),
+      armR: this.add.rectangle(0, 0, 9, 24, pal.arms).setDepth(d - 0.2),
+      legL: this.add.rectangle(0, 0, 13, 26, pal.legs).setDepth(d),
+      legR: this.add.rectangle(0, 0, 13, 26, pal.legs).setDepth(d),
+      body: this.add.rectangle(0, 0, 34, 36, pal.body).setDepth(d + 0.1),
+      backStripe: this.add.rectangle(0, 0, 5, 28, pal.stripe).setDepth(d + 0.2),
       head: this.add.circle(0, 0, 13, 0xffcc99).setDepth(d + 0.15),
-      hair: this.add.circle(0, 0, 15.5, 0x5d4037).setDepth(d + 0.3),
-      hairShine: this.add.ellipse(0, 0, 16, 8, 0x6d4c41).setDepth(d + 0.34),
+      hair: this.add.circle(0, 0, 15.5, pal.hair).setDepth(d + 0.3),
+      hairShine: this.add.ellipse(0, 0, 16, 8, pal.hairShine).setDepth(d + 0.34),
       headphoneL: this.add.ellipse(0, 0, 5, 9, 0x1c262b).setDepth(d + 0.45),
       headphoneR: this.add.ellipse(0, 0, 5, 9, 0x1c262b).setDepth(d + 0.45),
       headphoneBand: this.add.rectangle(0, 0, 28, 3.5, 0x1c262b).setDepth(d + 0.44),
-      ponytail: this.add.ellipse(0, 0, 9, 24, 0x4e342e).setDepth(d + 0.36),
-      bow: this.add.triangle(0, 0, -7, -4, -7, 4, 7, 0, 0xffd54f).setDepth(d + 0.5),
+      ponytail: this.add.ellipse(0, 0, 9, 24, pal.ponytail).setDepth(d + 0.36),
+      bow: this.add.triangle(0, 0, -7, -4, -7, 4, 7, 0, pal.bow).setDepth(d + 0.5),
       shield: this.add.ellipse(0, 0, 68, 88, 0x4fc3f7, 0.16).setStrokeStyle(3, 0x81d4fa, 0.92).setDepth(d + 1).setVisible(false),
       collectGlow: this.add.circle(0, 0, COLLECTION_RADIUS, 0xfff176, 0.08).setStrokeStyle(3, 0xfff176, 0.5).setDepth(d + 0.9).setVisible(this.rhythmMode),
       bodyGlow: this.add.ellipse(0, 0, 56, 78, 0xfff176, 0.05).setDepth(d + 0.05),
@@ -888,24 +602,20 @@ class GameScene extends Phaser.Scene {
       fontSize: '24px', fontFamily: 'Arial Black, Arial', fill: '#ffffff', stroke: '#00121f', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(22);
 
-    this.add.circle(W - 84, 32, 9, 0xffd700).setDepth(22);
-    this.coinTxt = this.add.text(W - 68, 32, '0', {
+    this.add.circle(W - 110, 32, 9, 0xffd700).setDepth(22);
+    this.coinTxt = this.add.text(W - 52, 32, '0', {
       fontSize: '19px', fontFamily: 'Arial Black, Arial', fill: '#ffd700', stroke: '#1b1200', strokeThickness: 3,
-    }).setOrigin(0, 0.5).setDepth(22);
+    }).setOrigin(1, 0.5).setDepth(22);
     this.modeTxt = this.add.text(W / 2, 82, this.rhythmMode ? 'RHYTHM RUN' : 'ENDLESS RUN', {
       fontSize: '10px', fontFamily: 'Arial Black, Arial', fill: '#b2ebff', letterSpacing: 2,
     }).setOrigin(0.5).setDepth(22).setAlpha(0.56);
 
-    this.powerTxt = this.add.text(18, 100, 'MAGNET —', {
-      fontSize: '11px', fontFamily: 'Arial Black, Arial', fill: '#ce93d8', stroke: '#130018', strokeThickness: 3,
-    }).setOrigin(0, 0.5).setDepth(21).setAlpha(0.78);
-    this.shieldTxt = this.add.text(W - 18, 100, 'SHIELD —', {
-      fontSize: '11px', fontFamily: 'Arial Black, Arial', fill: '#81d4fa', stroke: '#00121f', strokeThickness: 3,
-    }).setOrigin(1, 0.5).setDepth(21).setAlpha(0.78);
+    this.magnetBadge = this.add.graphics().setDepth(21);
+    this.shieldBadge = this.add.graphics().setDepth(21);
 
     if (this.rhythmMode) {
       this.beatHalo = this.add.circle(W / 2, PLAYER_ANCHOR_Y - 40, COLLECTION_RADIUS, 0xfff176, 0.08).setStrokeStyle(3, 0xfff176, 0.45).setDepth(16);
-      this.beatTxt = this.add.text(W / 2, 112, '128 BPM', {
+      this.beatTxt = this.add.text(W / 2, 112, `${this.rhythmBpm} BPM`, {
         fontSize: '10px', fontFamily: 'Arial Black, Arial', fill: '#fff176', stroke: '#000', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(21).setAlpha(0.58);
     }
@@ -935,17 +645,34 @@ class GameScene extends Phaser.Scene {
     this.pKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
     this.escKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
 
-    this.input.on('pointerdown', p => { unlockAudio(); this._touch = { x: p.x, y: p.y, t: this.time.now }; });
-    this.input.on('pointerup', p => {
+    // Gestures fire on pointermove the moment the threshold is crossed (lower
+    // latency than waiting for pointerup), then re-anchor so a held swipe can
+    // chain into the next gesture without lifting the finger.
+    this.input.on('pointerdown', p => { unlockAudio(); this._touch = { x: p.x, y: p.y }; this._touchHeld = true; });
+    this.input.on('pointermove', p => {
       if (!this._touch || this.pausedRun || !this.alive) return;
       const dx = p.x - this._touch.x;
       const dy = p.y - this._touch.y;
       const thr = TOUCH_THRESHOLD * DPR; // pointer coords are in framebuffer pixels
       if (Math.abs(dy) > Math.abs(dx) && dy < -thr) this._jump();
-      else if (Math.abs(dy) > Math.abs(dx) && dy > thr) this._slide();
+      else if (Math.abs(dy) > Math.abs(dx) && dy > thr) this._slide(true);
       else if (Math.abs(dx) > thr) this._switchLane(dx > 0 ? 1 : -1);
-      this._touch = null;
+      else return;
+      this._touch = { x: p.x, y: p.y };
     });
+    this.input.on('pointerup', () => { this._touch = null; this._touchHeld = false; });
+  }
+
+  _bufferInput(action) {
+    this.inputBuffer = { action, t: this.time.now };
+  }
+
+  _consumeBufferedInput() {
+    const buf = this.inputBuffer;
+    this.inputBuffer = null;
+    if (!buf || this.time.now - buf.t > 200) return;
+    if (buf.action === 'jump') this._jump();
+    else this._slide(buf.touch);
   }
 
   _jump() {
@@ -956,20 +683,26 @@ class GameScene extends Phaser.Scene {
       this.jumpVel = grounded ? JUMP_INIT : DOUBLE_JUMP_INIT;
       if (!grounded) this.flipT = 1; // front-flip on the double jump
       this.jumpsUsed = grounded ? 1 : this.jumpsUsed + 1;
-      this.combo = grounded ? 1 : Math.max(1, this.combo);
+      this.combo = Math.max(1, this.combo);
       this._toast(grounded ? 'Jump' : 'Double jump', this.pX, NEAR_Y - this.jumpH - 80);
       audio.jump();
+    } else {
+      this._bufferInput('jump'); // pressed a hair early — honor it on landing
     }
   }
 
-  _slide() {
+  _slide(fromTouch = false) {
     if (!this.alive || this.pausedRun) return;
     if (this.jumpH > 8) {
       this.jumpVel = Math.min(this.jumpVel, -620);
       this._toast('Fast drop', this.pX, NEAR_Y - this.jumpH - 60);
+      this._bufferInput('slide'); // slide as soon as the drop lands
+      this.inputBuffer.touch = fromTouch;
       return;
     }
     this.slideTimer = SLIDE_DURATION;
+    this.slideHoldMs = 0;
+    this._slideTouchHold = fromTouch;
     this.combo = Math.max(1, this.combo);
     audio.switchLane();
   }
@@ -987,10 +720,14 @@ class GameScene extends Phaser.Scene {
     this.pausedRun = !this.pausedRun;
     if (this.pausedRun) {
       audio.stop();
+      this.tweens.pauseAll();
+      this.time.paused = true;
       this._showPauseOverlay();
     } else {
-      if (this.rhythmMode) audio.playRhythm();
+      if (this.rhythmMode) audio.playRhythm(this.rhythmTrack);
       else audio.playGame();
+      this.tweens.resumeAll();
+      this.time.paused = false;
       this._hidePauseOverlay();
       this._showCountdown('GO');
     }
@@ -1032,9 +769,9 @@ class GameScene extends Phaser.Scene {
 
   _spawnRhythmCoin(beatIndex, hitTime) {
     const lane = this._rhythmLaneForBeat(beatIndex);
-    const coin = this.add.circle(0, 0, 1, 0xfff176).setDepth(6);
-    const shine = this.add.circle(0, 0, 1, 0xffffff, 0.78).setDepth(7);
-    const ring = this.add.circle(0, 0, 1, 0xff00ff, 0.12).setStrokeStyle(2, 0x00e5ff, 0.9).setDepth(6);
+    const coin = this._pCircle(0xfff176, 1, 6);
+    const shine = this._pCircle(0xffffff, 0.78, 7);
+    const ring = this._pCircle(0xff00ff, 0.12, 6).setStrokeStyle(2, 0x00e5ff, 0.9);
     this.gameObjs.push({
       type: 'coin', lane, z: SPAWN_Z, worldW: 60, worldH: 60,
       parts: [ring, coin, shine], ring, coin, shine, checked: false,
@@ -1045,37 +782,51 @@ class GameScene extends Phaser.Scene {
   _spawnRhythmObstacle(beatIndex) {
     const coinLane = this._rhythmLaneForBeat(beatIndex);
     const lane = Phaser.Utils.Array.GetRandom([0, 1, 2].filter(v => v !== coinLane));
-    const gfx = this.add.graphics().setDepth(5);
+    const gfx = this._pGfx(5);
     this.gameObjs.push({
       type: 'obstacle', lane, z: SPAWN_Z, worldH: 46, worldW: 34, worldD: 30, color: 0x4527a0,
       gfx, parts: [gfx], checked: false,
-      hitTime: beatIndex * RHYTHM_BEAT_MS, rhythmTimed: true,
+      hitTime: beatIndex * this.beatMs, rhythmTimed: true,
     });
   }
 
+  _resyncRhythm(newMusicTime) {
+    this.musicTime = newMusicTime;
+    for (let i = this.gameObjs.length - 1; i >= 0; i--) {
+      const o = this.gameObjs[i];
+      if (o.rhythmTimed) {
+        o.parts.forEach(p => this._releaseObj(p));
+        this.gameObjs.splice(i, 1);
+      }
+    }
+    this.nextRhythmBeat = Math.max(RHYTHM_APPROACH_BEATS, Math.floor(newMusicTime / this.beatMs) + 2);
+    this.lastBeatPulse = -1;
+  }
+
   _updateRhythmSpawner() {
-    const currentBeat = Math.floor(this.runTime / RHYTHM_BEAT_MS);
+    const currentBeat = Math.floor(this.musicTime / this.beatMs);
     if (currentBeat !== this.lastBeatPulse) {
       this.lastBeatPulse = currentBeat;
       this.beatPulse = 1;
       if (this.beatHalo) {
         this.beatHalo.setPosition(this.pX, PLAYER_ANCHOR_Y - 40).setScale(1.35).setAlpha(0.18);
-        this.tweens.add({ targets: this.beatHalo, scale: 1, alpha: 0.08, duration: RHYTHM_BEAT_MS * 0.75, ease: 'Sine.easeOut' });
+        this.tweens.add({ targets: this.beatHalo, scale: 1, alpha: 0.08, duration: this.beatMs * 0.75, ease: 'Sine.easeOut' });
       }
     }
 
-    const lookaheadHitTime = this.runTime + RHYTHM_APPROACH_MS;
-    while (this.nextRhythmBeat * RHYTHM_BEAT_MS <= lookaheadHitTime) {
-      const hitTime = this.nextRhythmBeat * RHYTHM_BEAT_MS;
+    const lookaheadHitTime = this.musicTime + this.approachMs;
+    while (this.nextRhythmBeat * this.beatMs <= lookaheadHitTime) {
+      const hitTime = this.nextRhythmBeat * this.beatMs;
       this._spawnRhythmCoin(this.nextRhythmBeat, hitTime);
-      if (this.runTime > 6500 && this.nextRhythmBeat % 8 === 6) this._spawnRhythmObstacle(this.nextRhythmBeat);
+      const obstacleEvery = this.rhythmTrack === 'hyper' ? 4 : this.rhythmTrack === 'chill' ? 16 : 8;
+      if (this.musicTime > 6500 && this.nextRhythmBeat % obstacleEvery === obstacleEvery - 2) this._spawnRhythmObstacle(this.nextRhythmBeat);
       this.nextRhythmBeat += 1;
     }
   }
 
   // ── Spawn helpers ───────────────────────────────────────────────────────────
   _difficulty() {
-    return Phaser.Math.Clamp(this.runTime / 90000, 0, 1);
+    return Phaser.Math.Clamp(this.runTime / 150000, 0, 1);
   }
 
   _scheduleNextSpawn(extra = 0) {
@@ -1167,42 +918,130 @@ class GameScene extends Phaser.Scene {
       } },
       { w: 5, fn: () => this._spawnShield(pickFree(), SPAWN_Z) },
       { w: 5, fn: () => { const l = pickFree(); this._spawnMagnet(l, SPAWN_Z); this._spawnCoinLine(l, SPAWN_Z + 180, 4); } },
+      { w: 7, min: 0.3, fn: () => { // zig-zag coin sprint across all lanes
+        let lane = anyLane();
+        for (let s = 0; s < 5; s++) {
+          this._spawnCoinLine(lane, SPAWN_Z + s * 230, 2);
+          lane = lane === 1 ? (Math.random() < 0.5 ? 0 : 2) : 1;
+        }
+      } },
+      { w: 8, min: 0.35, extraGap: 400, fn: () => { // double-gate corridor
+        const free = this._freeLanes(SPAWN_Z, 1100);
+        if (free.length < 3) { this._spawnCoinLine(pickFree(), SPAWN_Z, 5); return; }
+        const open = anyLane();
+        [0, 1, 2].filter(l => l !== open).forEach(l => {
+          this._spawnGate(l, SPAWN_Z);
+          this._spawnGate(l, SPAWN_Z + 420);
+        });
+        this._spawnCoinLine(open, SPAWN_Z, 6);
+      } },
+      { w: 8, min: 0.45, extraGap: 400, fn: () => { // same lane: slide, then jump
+        const lane = pickFree(900);
+        this._spawnGate(lane, SPAWN_Z);
+        this._spawnCrate(lane, SPAWN_Z + 420, { h: 48 });
+        this._spawnCoinArc(lane, SPAWN_Z + 200, 5);
+      } },
+      { w: 7, min: 0.55, extraGap: 300, fn: () => { // crate drifting across lanes
+        const free = this._freeLanes(SPAWN_Z, 800);
+        const from = free.length ? Phaser.Utils.Array.GetRandom(free) : 1;
+        const to = Phaser.Math.Clamp(from + (from === 0 ? 1 : from === 2 ? -1 : Phaser.Utils.Array.GetRandom([-1, 1])), 0, 2);
+        this._spawnDriftingCrate(from, to);
+      } },
     ];
     return this._patterns;
   }
 
+  _spawnDriftingCrate(laneFrom, laneTo) {
+    const gfx = this._pGfx(5);
+    this.gameObjs.push({
+      type: 'obstacle', lane: laneFrom, laneFrom, laneTo, drift: true,
+      z: SPAWN_Z, worldH: 52, worldW: 42, worldD: 34, color: 0x8e24aa,
+      gfx, parts: [gfx], checked: false,
+    });
+  }
+
+  // ── Object pooling ────────────────────────────────────────────────────────
+  // Spawned objects and particles churn constantly; reusing display objects
+  // avoids per-spawn allocations and GC hitches on long mobile runs.
+  _acquire(kind) {
+    const o = this._pools[kind].pop();
+    if (o) {
+      o.setVisible(true).setActive(true).setAlpha(1).setScale(1);
+      if (o.setRotation) o.setRotation(0);
+      return o;
+    }
+    let created;
+    if (kind === 'gfx') created = this.add.graphics();
+    else if (kind === 'circle') created = this.add.circle(0, 0, 1, 0xffffff);
+    else if (kind === 'ellipse') created = this.add.ellipse(0, 0, 1, 1, 0xffffff);
+    else created = this.add.rectangle(0, 0, 1, 1, 0xffffff);
+    created._poolKind = kind;
+    return created;
+  }
+
+  _releaseObj(p) {
+    if (!p || !p.scene) return; // already destroyed (e.g. scene shutdown)
+    if (!p._poolKind) { p.destroy(); return; }
+    if (p._poolKind === 'gfx') p.clear();
+    p.setVisible(false).setActive(false);
+    this._pools[p._poolKind].push(p);
+  }
+
+  _pGfx(depth) { return this._acquire('gfx').setDepth(depth); }
+  _pCircle(color, alpha, depth) {
+    const c = this._acquire('circle');
+    c.setFillStyle(color, alpha === undefined ? 1 : alpha);
+    c.setStrokeStyle();
+    c.setRadius(1);
+    return c.setDepth(depth);
+  }
+  _pEllipse(color, alpha, depth) {
+    const e = this._acquire('ellipse');
+    e.setFillStyle(color, alpha === undefined ? 1 : alpha);
+    e.setStrokeStyle();
+    e.setSize(1, 1);
+    return e.setDepth(depth);
+  }
+  _pRect(color, alpha, depth) {
+    const r = this._acquire('rect');
+    r.setFillStyle(color, alpha === undefined ? 1 : alpha);
+    r.setStrokeStyle();
+    r.setSize(1, 1);
+    return r.setDepth(depth);
+  }
+
   _spawnCrate(lane, z, { h = Phaser.Math.Between(42, 68), w = Phaser.Math.Between(34, 50) } = {}) {
     const color = Phaser.Utils.Array.GetRandom([0xd32f2f, 0xe65100, 0x5d4037]);
-    const gfx = this.add.graphics().setDepth(5);
+    const gfx = this._pGfx(5);
     this.gameObjs.push({ type: 'obstacle', lane, z, worldH: h, worldW: w, worldD: Phaser.Math.Between(28, 44), color, gfx, parts: [gfx], checked: false });
   }
 
   _spawnGate(lane, z) {
-    const gfx = this.add.graphics().setDepth(5);
+    const gfx = this._pGfx(5);
     this.gameObjs.push({ type: 'gate', lane, z, worldH: 86, worldW: 74, gfx, parts: [gfx], checked: false });
   }
 
   _spawnShield(lane = Phaser.Math.Between(0, 2), z = SPAWN_Z) {
-    const shadow = this.add.ellipse(0, 0, 1, 1, 0x000000, 0.16).setDepth(4.5);
-    const ring = this.add.circle(0, 0, 1, 0x4fc3f7, 0.18).setStrokeStyle(2, 0xb3e5fc, 0.95).setDepth(6);
-    const core = this.add.circle(0, 0, 1, 0x81d4fa, 0.9).setDepth(6);
-    const glint = this.add.circle(0, 0, 1, 0xffffff, 0.75).setDepth(7);
+    const shadow = this._pEllipse(0x000000, 0.16, 4.5);
+    const ring = this._pCircle(0x4fc3f7, 0.18, 6).setStrokeStyle(2, 0xb3e5fc, 0.95);
+    const core = this._pCircle(0x81d4fa, 0.9, 6);
+    const glint = this._pCircle(0xffffff, 0.75, 7);
     this.gameObjs.push({ type: 'shield', lane, z, worldW: 44, worldH: 44, parts: [shadow, ring, core, glint], shadow, ring, core, glint, checked: false });
   }
 
   _spawnMagnet(lane = Phaser.Math.Between(0, 2), z = SPAWN_Z) {
-    const shadow = this.add.ellipse(0, 0, 1, 1, 0x000000, 0.16).setDepth(4.5);
-    const ring = this.add.circle(0, 0, 1, 0x8e24aa, 0.2).setStrokeStyle(2, 0xf3e5f5, 0.95).setDepth(6);
-    const core = this.add.rectangle(0, 0, 1, 1, 0xba68c8).setDepth(7);
-    const spark = this.add.circle(0, 0, 1, 0xffffff, 0.82).setDepth(8);
+    const shadow = this._pEllipse(0x000000, 0.16, 4.5);
+    const ring = this._pCircle(0x8e24aa, 0.2, 6).setStrokeStyle(2, 0xf3e5f5, 0.95);
+    const core = this._pRect(0xba68c8, 1, 7);
+    const spark = this._pCircle(0xffffff, 0.82, 8);
     this.gameObjs.push({ type: 'magnet', lane, z, worldW: 44, worldH: 44, parts: [shadow, ring, core, spark], shadow, ring, core, spark, checked: false });
   }
 
   _spawnCoin(lane, z, elev = 42) {
-    const shadow = this.add.ellipse(0, 0, 1, 1, 0x000000, 0.14).setDepth(4.5);
-    const ring = this.add.circle(0, 0, 1, 0xfff176, 0.1).setStrokeStyle(2, 0xfff176, 0.55).setDepth(5);
-    const coin = this.add.circle(0, 0, 1, 0xffd700).setDepth(6);
-    const shine = this.add.circle(0, 0, 1, 0xfff59d, 0.72).setDepth(7);
+    const shadow = this._pEllipse(0x000000, 0.14, 4.5);
+    const ring = this._pCircle(0xfff176, 0.1, 5).setStrokeStyle(2, 0xfff176, 0.55);
+    const coin = this._pCircle(0xffd700, 1, 6);
+    const shine = this._pCircle(0xfff59d, 0.72, 7);
     this.gameObjs.push({ type: 'coin', lane, z, elev, worldW: 49, worldH: 49, parts: [shadow, ring, coin, shine], shadow, ring, coin, shine, checked: false });
   }
 
@@ -1222,14 +1061,14 @@ class GameScene extends Phaser.Scene {
   }
 
   _spawnWagon(lane, z, carIdx = 0) {
-    const gfx = this.add.graphics().setDepth(5);
+    const gfx = this._pGfx(5);
     const numCoins = Phaser.Math.Between(5, 8);
     const coins = [];
     for (let i = 0; i < numCoins; i++) {
       const t = numCoins > 1 ? i / (numCoins - 1) : 0.5;
       coins.push({
-        obj: this.add.circle(0, 0, 1, 0xffd700).setDepth(6),
-        shine: this.add.circle(0, 0, 1, 0xffe082).setAlpha(0.7).setDepth(6),
+        obj: this._pCircle(0xffd700, 1, 6),
+        shine: this._pCircle(0xffe082, 1, 6).setAlpha(0.7),
         fracX: Phaser.Math.FloatBetween(-0.2, 0.2),
         lengthT: t,
         collected: false,
@@ -1334,7 +1173,7 @@ class GameScene extends Phaser.Scene {
     }
 
     if (obj.type === 'coin') {
-      const timingPulse = obj.hitTime ? Math.max(0, 1 - Math.abs(this.runTime - obj.hitTime) / RHYTHM_BEAT_WINDOW_MS) : 0;
+      const timingPulse = obj.hitTime ? Math.max(0, 1 - Math.abs(this.musicTime - obj.hitTime) / RHYTHM_BEAT_WINDOW_MS) : 0;
       const pulse = 1 + Math.sin(this.time.now / 115 + obj.z) * 0.08 + timingPulse * 0.35;
       let r = Math.max(4, (obj.hitTime ? 21 : 17.5) * sc * pulse);
       let cy = zTopY(z, obj.elev !== undefined ? obj.elev : 42);
@@ -1520,10 +1359,10 @@ class GameScene extends Phaser.Scene {
     let rhythmBonus = 0;
     let rhythmLabel = null;
     if (obj.hitTime) {
-      const timing = Math.abs(this.runTime - obj.hitTime);
-      if (timing <= 70) { rhythmBonus = 35; rhythmLabel = 'Perfect beat!'; }
-      else if (timing <= RHYTHM_BEAT_WINDOW_MS) { rhythmBonus = 18; rhythmLabel = 'Good beat'; }
-      else { rhythmLabel = 'Off beat'; }
+      const timing = Math.abs(this.musicTime - obj.hitTime);
+      if (timing <= 70) { rhythmBonus = 35; rhythmLabel = 'Perfect beat!'; this.rhythmStats.perfect++; }
+      else if (timing <= RHYTHM_BEAT_WINDOW_MS) { rhythmBonus = 18; rhythmLabel = 'Good beat'; this.rhythmStats.good++; }
+      else { rhythmLabel = 'Off beat'; this.rhythmStats.off++; }
     }
     this.combo = Math.min(this.combo + (obj.hitTime && rhythmBonus > 0 ? 0.4 : 0.25), 5);
     this._addScore(Math.round((COIN_SCORE + rhythmBonus) * this.combo), label || rhythmLabel || (this.combo >= 2 ? `Streak x${this.combo.toFixed(1)}` : null));
@@ -1533,14 +1372,54 @@ class GameScene extends Phaser.Scene {
     audio.coin();
   }
 
+  // Icon badges with a radial countdown for the magnet; the last 1.5s blinks.
   _updatePowerUI() {
-    this.powerTxt.setText(this.magnetTimer > 0 ? `MAGNET ${Math.ceil(this.magnetTimer / 1000)}s` : 'MAGNET —');
-    this.powerTxt.setAlpha(this.magnetTimer > 0 ? 1 : 0.62);
+    const g = this.magnetBadge;
+    g.clear();
+    const x = 30, y = 106, r = 13;
+    const active = this.magnetTimer > 0;
+    const blink = active && this.magnetTimer < 1500 && Math.floor(this.time.now / 130) % 2 === 0;
+    g.fillStyle(0x130018, active ? 0.85 : 0.4);
+    g.fillCircle(x, y, r + 3);
+    if (active && !blink) {
+      const frac = this.magnetTimer / MAGNET_DURATION;
+      g.lineStyle(3, 0xce93d8, 0.95);
+      g.beginPath();
+      g.arc(x, y, r + 1, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
+      g.strokePath();
+    }
+    const a = active && !blink ? 1 : 0.35;
+    g.lineStyle(4, 0xba68c8, a);
+    g.beginPath();
+    g.arc(x, y - 2, 5, Math.PI, 0, false);
+    g.strokePath();
+    g.fillStyle(0xba68c8, a);
+    g.fillRect(x - 7, y - 2, 4, 6);
+    g.fillRect(x + 3, y - 2, 4, 6);
+    g.fillStyle(0xffffff, a * 0.9);
+    g.fillRect(x - 7, y + 2, 4, 3);
+    g.fillRect(x + 3, y + 2, 4, 3);
   }
 
   _updateShieldUI() {
-    this.shieldTxt.setText(this.shieldCharges > 0 ? 'SHIELD ON' : 'SHIELD —');
-    this.shieldTxt.setAlpha(this.shieldCharges > 0 ? 1 : 0.62);
+    const g = this.shieldBadge;
+    g.clear();
+    const x = W - 30, y = 106, r = 13;
+    const active = this.shieldCharges > 0;
+    g.fillStyle(0x00121f, active ? 0.85 : 0.4);
+    g.fillCircle(x, y, r + 3);
+    if (active) {
+      g.lineStyle(2, 0x81d4fa, 0.9);
+      g.strokeCircle(x, y, r + 1);
+    }
+    const a = active ? 1 : 0.35;
+    g.fillStyle(0x4fc3f7, a);
+    g.fillPoints([
+      { x: x - 6, y: y - 6 }, { x: x + 6, y: y - 6 },
+      { x: x + 6, y: y + 1 }, { x: x, y: y + 7 }, { x: x - 6, y: y + 1 },
+    ], true);
+    g.fillStyle(0xffffff, a * 0.5);
+    g.fillRect(x - 4, y - 4, 3, 3);
   }
 
   _consumeShield(label) {
@@ -1553,6 +1432,11 @@ class GameScene extends Phaser.Scene {
     const flash = this.add.rectangle(W / 2, H / 2, W, H, 0x4fc3f7, 0.24).setDepth(24);
     this.time.delayedCall(140, () => flash.destroy());
     audio.shieldBreak();
+    vibrate(60);
+    if (!this.rhythmMode) {
+      this.chaseT = 1; // the shadow beast closes in until the player recovers
+      this._toast('It\'s right behind you!', W / 2, 150);
+    }
     return true;
   }
 
@@ -1571,23 +1455,26 @@ class GameScene extends Phaser.Scene {
     this.playerBounce = Math.min(1, 0.55 + Phaser.Math.Clamp((this.combo - 1) / 4, 0, 1) * 0.45);
     const comboEnergy = Phaser.Math.Clamp((this.combo - 1) / 4, 0, 1);
     const fieldY = PLAYER_ANCHOR_Y - 42;
-    const ring = this.add.circle(this.pX, fieldY, COLLECTION_RADIUS * 0.62, color, 0.08)
-      .setStrokeStyle(3 + comboEnergy * 3, color, 0.82)
-      .setDepth(21);
+    const ring = this._pCircle(color, 0.08, 21)
+      .setPosition(this.pX, fieldY)
+      .setRadius(COLLECTION_RADIUS * 0.62)
+      .setStrokeStyle(3 + comboEnergy * 3, color, 0.82);
     this.tweens.add({
       targets: ring,
       radius: COLLECTION_RADIUS * (1.22 + comboEnergy * 0.3),
       alpha: 0,
       duration: 360,
       ease: 'Sine.easeOut',
-      onComplete: () => ring.destroy(),
+      onComplete: () => this._releaseObj(ring),
     });
     const beam = this.add.line(0, 0, x, y, this.pX, fieldY, color, 0.42 + comboEnergy * 0.18).setOrigin(0, 0).setLineWidth(3 + comboEnergy * 2).setDepth(20);
     this.tweens.add({ targets: beam, alpha: 0, duration: 180, ease: 'Quad.easeOut', onComplete: () => beam.destroy() });
 
     const burstCount = 5 + Math.round(comboEnergy * 5);
     for (let i = 0; i < burstCount; i++) {
-      const spark = this.add.circle(this.pX, fieldY, Phaser.Math.FloatBetween(2, 4 + comboEnergy * 2), color, 0.78).setDepth(21);
+      const spark = this._pCircle(color, 0.78, 21)
+        .setPosition(this.pX, fieldY)
+        .setRadius(Phaser.Math.FloatBetween(2, 4 + comboEnergy * 2));
       const ang = Phaser.Math.FloatBetween(-Math.PI, Math.PI);
       const dist = Phaser.Math.FloatBetween(16, 36 + comboEnergy * 24);
       this.tweens.add({
@@ -1598,7 +1485,7 @@ class GameScene extends Phaser.Scene {
         alpha: 0,
         duration: Phaser.Math.Between(220, 420),
         ease: 'Quad.easeOut',
-        onComplete: () => spark.destroy(),
+        onComplete: () => this._releaseObj(spark),
       });
     }
   }
@@ -1607,7 +1494,9 @@ class GameScene extends Phaser.Scene {
     const t = this.add.text(x, y, '+1', { fontSize: '20px', fontFamily: 'Arial Black', fill: '#fff176', stroke: '#3b2700', strokeThickness: 3 }).setOrigin(0.5).setDepth(22);
     this.tweens.add({ targets: t, y: y - 50, alpha: 0, duration: 520, ease: 'Power2', onComplete: () => t.destroy() });
     for (let i = 0; i < 7; i++) {
-      const spark = this.add.circle(x, y, Phaser.Math.FloatBetween(2, 4), i % 2 ? 0x00e5ff : 0xfff176, 0.86).setDepth(21);
+      const spark = this._pCircle(i % 2 ? 0x00e5ff : 0xfff176, 0.86, 21)
+        .setPosition(x, y)
+        .setRadius(Phaser.Math.FloatBetween(2, 4));
       const ang = Phaser.Math.FloatBetween(-Math.PI, Math.PI);
       const dist = Phaser.Math.FloatBetween(18, 46);
       this.tweens.add({
@@ -1618,22 +1507,56 @@ class GameScene extends Phaser.Scene {
         alpha: 0,
         duration: Phaser.Math.Between(260, 460),
         ease: 'Quad.easeOut',
-        onComplete: () => spark.destroy(),
+        onComplete: () => this._releaseObj(spark),
       });
+    }
+  }
+
+  // The shadow beast looms after a shield save; combos shake it off faster.
+  _updateChase(dt) {
+    if (this.rhythmMode || !this.chaserG) return;
+    if (this.chaseT <= 0) { this.chaserG.clear(); return; }
+    this.chaseT = Math.max(0, this.chaseT - (dt / 8) * (this.combo >= 3 ? 2 : 1));
+    const g = this.chaserG;
+    g.clear();
+    if (this.chaseT < 0.05) return;
+    const close = Phaser.Math.Clamp(this.chaseT, 0, 1);
+    const x = W / 2 + (this.pX - W / 2) * 0.5;
+    const y = H - 40 + (1 - close) * 130; // rises into view as it closes
+    const sc = 0.7 + close * 0.7;
+    const bob = Math.sin(this.time.now / 130) * 4 * close;
+    g.fillStyle(0x0a0612, 0.78 + close * 0.18);
+    g.fillEllipse(x, y + bob, 150 * sc, 110 * sc);
+    g.fillEllipse(x - 60 * sc, y + 18 + bob * 1.2, 46 * sc, 60 * sc);
+    g.fillEllipse(x + 60 * sc, y + 18 - bob * 1.2, 46 * sc, 60 * sc);
+    const eyeA = Phaser.Math.Clamp(0.55 + close * 0.45 + Math.sin(this.time.now / 90) * 0.1, 0, 1);
+    g.fillStyle(0xff1744, eyeA);
+    g.fillCircle(x - 22 * sc, y - 18 * sc + bob, 7 * sc);
+    g.fillCircle(x + 22 * sc, y - 18 * sc + bob, 7 * sc);
+    g.fillStyle(0xffffff, eyeA * 0.7);
+    g.fillCircle(x - 22 * sc, y - 18 * sc + bob, 2.5 * sc);
+    g.fillCircle(x + 22 * sc, y - 18 * sc + bob, 2.5 * sc);
+    if (this.chaseT > 0.4 && this.time.now - this._lastHeartbeat > 620) {
+      this._lastHeartbeat = this.time.now;
+      audio.heartbeat();
     }
   }
 
   _gameOver(reason = 'Run ended') {
     if (!this.alive) return;
+    if (!this.rhythmMode && this.chaseT > 0.4) reason = 'Caught by the shadow beast!';
     this.alive = false;
     audio.gameOver();
+    vibrate(180);
 
     const finalScore = Math.floor(this.score);
-    const oldBest = loadNumber(STORAGE_KEYS.bestScore);
-    const oldCoins = loadNumber(STORAGE_KEYS.bestCoins);
+    const keys = bestKeys(this.rhythmMode, this.rhythmTrack);
+    const oldBest = loadNumber(keys.score);
+    const oldCoins = loadNumber(keys.coins);
     const newBest = finalScore > oldBest;
-    if (newBest) saveNumber(STORAGE_KEYS.bestScore, finalScore);
-    if (this.coinCount > oldCoins) saveNumber(STORAGE_KEYS.bestCoins, this.coinCount);
+    if (newBest) saveNumber(keys.score, finalScore);
+    if (this.coinCount > oldCoins) saveNumber(keys.coins, this.coinCount);
+    addToWallet(this.coinCount); // run coins go into the shop wallet
 
     // Crash impact: shake + flash first, the panel lands after a short beat
     this.cameras.main.shake(280, 0.014);
@@ -1647,7 +1570,16 @@ class GameScene extends Phaser.Scene {
       this.add.text(W / 2, H / 2 - 76, reason, { fontSize: '16px', fontFamily: 'Arial', fill: '#cfd8dc' }).setOrigin(0.5).setDepth(26);
       this.add.text(W / 2, H / 2 - 30, `Score: ${finalScore}${newBest ? '  NEW BEST!' : ''}`, { fontSize: '24px', fontFamily: 'Arial', fill: newBest ? '#b7ffb7' : '#fff' }).setOrigin(0.5).setDepth(26);
       this.add.text(W / 2, H / 2 + 5, `Coins: ${this.coinCount}`, { fontSize: '21px', fontFamily: 'Arial', fill: '#ffd700' }).setOrigin(0.5).setDepth(26);
-      this.add.text(W / 2, H / 2 + 34, bestSummary(), { fontSize: '15px', fontFamily: 'Arial', fill: '#9ecbff' }).setOrigin(0.5).setDepth(26);
+      this.add.text(W / 2, H / 2 + 34, bestSummary(this.rhythmMode), { fontSize: '15px', fontFamily: 'Arial', fill: '#9ecbff' }).setOrigin(0.5).setDepth(26);
+      if (this.rhythmMode) {
+        const st = this.rhythmStats;
+        const total = st.perfect + st.good + st.off + st.miss;
+        const ratio = total ? st.perfect / total : 0;
+        const grade = ratio >= 0.8 ? 'S' : ratio >= 0.6 ? 'A' : ratio >= 0.4 ? 'B' : 'C';
+        this.add.text(W / 2, H / 2 + 60, `Perfect ${st.perfect} · Good ${st.good} · Miss ${st.miss}   GRADE: ${grade}`, {
+          fontSize: '13px', fontFamily: 'Arial Black, Arial', fill: '#fff176',
+        }).setOrigin(0.5).setDepth(26);
+      }
 
       const restartBtn = this.add.rectangle(W / 2, H / 2 + 96, 200, 50, 0xff6b6b).setInteractive({ useHandCursor: true }).setDepth(26);
       const menuBtn = this.add.rectangle(W / 2, H / 2 + 154, 200, 38, 0x455a64).setInteractive({ useHandCursor: true }).setDepth(26);
@@ -1658,9 +1590,9 @@ class GameScene extends Phaser.Scene {
     });
 
     const restart = () => {
-      if (this.rhythmMode) audio.playRhythm();
+      if (this.rhythmMode) audio.playRhythm(this.rhythmTrack);
       else audio.playGame();
-      this.scene.restart({ rhythmMode: this.rhythmMode });
+      this.scene.restart({ rhythmMode: this.rhythmMode, rhythmTrack: this.rhythmTrack });
     };
     this.time.delayedCall(350, () => {
       this.input.keyboard.once('keydown-SPACE', () => { unlockAudio(); restart(); });
@@ -1675,6 +1607,15 @@ class GameScene extends Phaser.Scene {
 
     const dt = delta / 1000;
     this.runTime += delta;
+    if (this.rhythmMode) {
+      // Beats follow the audio clock, not the game clock, so coins stay on
+      // the music. A backwards jump means the track restarted (pause/resume,
+      // late audio unlock) — drop scheduled beats and re-anchor.
+      const tt = audio.getTrackTime ? audio.getTrackTime() : null;
+      const newMusicTime = tt != null ? tt * 1000 : this.runTime;
+      if (newMusicTime < this.musicTime - this.beatMs) this._resyncRhythm(newMusicTime);
+      this.musicTime = newMusicTime;
+    }
     this.beatPulse = Math.max(0, this.beatPulse - dt * (this.rhythmMode ? 4.4 : 2.2));
     this.collectPulse = Math.max(0, this.collectPulse - dt * 5.8);
     this.playerBounce = Math.max(0, this.playerBounce - dt * 6.5);
@@ -1682,12 +1623,13 @@ class GameScene extends Phaser.Scene {
     this.landSquash = Math.max(0, this.landSquash - dt * 7);
     this.flipT = Math.max(0, this.flipT - dt * 2.6);
     this.distance += this.speed * dt;
-    this.speed = Math.min(MAX_SPEED, BASE_SPEED + this.runTime * 0.0035);
+    // Each unlocked world raises the speed ceiling a notch
+    this.speed = Math.min(MAX_SPEED + this.worldIdx * 60, BASE_SPEED + this.runTime * 0.0035);
     this.level = 1 + Math.floor(this.distance / 4500);
     this.score += SCORE_PER_SECOND * dt * (1 + Math.min(0.5, (this.combo - 1) * 0.08));
     this.scoreTxt.setText(String(Math.floor(this.score)));
     this.comboTxt.setText(`x${this.combo.toFixed(1)}`);
-    if (this.rhythmMode && this.beatTxt) this.beatTxt.setText(`${RHYTHM_BPM} BPM  •  BEAT ${Math.max(1, Math.floor(this.runTime / RHYTHM_BEAT_MS) + 1)}`);
+    if (this.rhythmMode && this.beatTxt) this.beatTxt.setText(`${this.rhythmBpm} BPM  •  BEAT ${Math.max(1, Math.floor(this.musicTime / this.beatMs) + 1)}`);
     this.modeTxt.setText(this.rhythmMode ? 'RHYTHM RUN' : `LEVEL ${this.level}`);
     if (this.magnetTimer > 0) {
       this.magnetTimer = Math.max(0, this.magnetTimer - delta);
@@ -1695,6 +1637,11 @@ class GameScene extends Phaser.Scene {
     }
     if (this.slideTimer > 0) {
       this.slideTimer = Math.max(0, this.slideTimer - delta);
+      this.slideHoldMs += delta;
+      // Hold-to-slide: a touch slide keeps going while the finger stays down
+      if (this.slideTimer <= 0 && this._slideTouchHold && this._touchHeld && this.slideHoldMs < 1600) {
+        this.slideTimer = 90;
+      }
       if (!this._slideDustAt || this.time.now - this._slideDustAt > 90) {
         this._slideDustAt = this.time.now;
         this._dustPuff(this.pX + Phaser.Math.Between(-12, 12), PLAYER_ANCHOR_Y + 2, 2);
@@ -1735,8 +1682,14 @@ class GameScene extends Phaser.Scene {
       // Rhythm-timed objects are positioned purely from their beat time so they
       // always arrive at the player exactly on the downbeat.
       const prevZ = obj.z;
-      if (obj.rhythmTimed) obj.z = SPAWN_Z * (obj.hitTime - this.runTime) / RHYTHM_APPROACH_MS;
+      if (obj.rhythmTimed) obj.z = SPAWN_Z * (obj.hitTime - this.musicTime) / this.approachMs;
       else obj.z -= this.speed * dt;
+
+      // Drifting crates slide between lanes on approach and settle by z=450,
+      // leaving the player ~0.6s to react once the final lane is committed.
+      if (obj.drift) {
+        obj.lane = Phaser.Math.Linear(obj.laneTo, obj.laneFrom, Phaser.Math.Clamp((obj.z - 450) / 750, 0, 1));
+      }
 
       // Magnet: nearby coins fly to the player instead of teleport-collecting
       if (obj.type === 'coin' && !obj.checked) {
@@ -1759,7 +1712,8 @@ class GameScene extends Phaser.Scene {
 
       const cleanupZ = -(100 + (obj.worldL || 0));
       if (obj.consumed || obj.z < cleanupZ) {
-        obj.parts.forEach(p => p.destroy());
+        if (obj.rhythmTimed && obj.type === 'coin' && !obj.checked) this.rhythmStats.miss++;
+        obj.parts.forEach(p => this._releaseObj(p));
         this.gameObjs.splice(i, 1);
         continue;
       }
@@ -1777,33 +1731,16 @@ class GameScene extends Phaser.Scene {
     this._updateWorldScenery(dt);
     this._tryAdvanceWorld();
     this._updateSpeedLines(dt);
+    this._updateChase(dt);
     if (this.rhythmMode) this._updateRhythmSpawner(delta);
     else if (this.runTime >= this.spawnCursor) this._spawnPattern();
 
     // Occasional overhead arch — pure scenery, sells the depth
     if (this.distance >= this.nextArchDist) {
       this.nextArchDist = this.distance + Phaser.Math.Between(2600, 4400);
-      const gfx = this.add.graphics().setDepth(5);
+      const gfx = this._pGfx(5);
       this.gameObjs.push({ type: 'arch', lane: 1, z: SPAWN_Z, deco: true, gfx, parts: [gfx], checked: true });
     }
     this._syncPlayer(time);
   }
 }
-
-// ─── Phaser config ────────────────────────────────────────────────────────────
-const config = {
-  type: Phaser.AUTO,
-  backgroundColor: '#060c18',
-  input: { activePointers: 3 },
-  physics: { default: 'arcade', arcade: { gravity: { y: 0 }, debug: false } },
-  scene: [BootScene, GameScene],
-  scale: {
-    parent: 'game-container',
-    mode: Phaser.Scale.FIT,
-    autoCenter: Phaser.Scale.NO_CENTER, // index.html centers via flexbox
-    width: W * DPR,
-    height: H * DPR,
-  },
-};
-
-window.game = new Phaser.Game(config);

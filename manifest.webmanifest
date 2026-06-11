@@ -1,0 +1,14 @@
+{
+  "name": "Sofia's Endless Runner",
+  "short_name": "Sofia Run",
+  "description": "Three-lane endless runner with a rhythm mode. Jump, slide, chain combos.",
+  "start_url": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#060c18",
+  "theme_color": "#060c18",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
