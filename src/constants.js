@@ -41,6 +41,9 @@ export const STORAGE_KEYS = {
   bestCoinsRhythm: 'ser_best_coins_rhythm_v1',
   muted: 'ser_muted_v1',
   seenHelp: 'ser_seen_help_v1',
+  musicVol: 'ser_music_vol_v1',
+  sfxVol: 'ser_sfx_vol_v1',
+  haptics: 'ser_haptics_v1',
 };
 
 // ─── Persistent storage (guarded: private browsing may block localStorage) ────
@@ -68,6 +71,17 @@ export const bestSummary = (rhythm = false) => {
   const k = bestKeys(rhythm);
   return `Best: ${loadNumber(k.score)} · Coins: ${loadNumber(k.coins)}`;
 };
+// 0–100 stored percentage with a default of 100
+export const loadVolume = (key) => {
+  const raw = loadString(key);
+  return raw === null ? 100 : Math.max(0, Math.min(100, Number(raw) || 0));
+};
+
+export const hapticsEnabled = () => loadString(STORAGE_KEYS.haptics) !== '0';
+export const vibrate = (ms) => {
+  if (hapticsEnabled() && typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(ms);
+};
+
 export const appVersionLabel = () => {
   const version = window.APP_VERSION || {};
   return `Version: ${version.label || version.commit || 'local-dev'}`;

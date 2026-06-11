@@ -8,6 +8,8 @@ class AudioManager {
     this._track = null;
     this._loopTimer = null;
     this._muted = false;
+    this._musicVol = 1;
+    this._sfxVol = 1;
     this._pendingPlayId = 0;
     this._scheduleFn = null;
     this._trackStart = null;
@@ -23,14 +25,29 @@ class AudioManager {
     this._ctx = new AudioContextCtor();
 
     this._musicGain = this._ctx.createGain();
-    this._musicGain.gain.value = this._muted ? 0 : 0.38;
     this._musicGain.connect(this._ctx.destination);
 
     this._sfxGain = this._ctx.createGain();
-    this._sfxGain.gain.value = this._muted ? 0 : 0.75;
     this._sfxGain.connect(this._ctx.destination);
 
+    this._applyGains();
     return true;
+  }
+
+  _applyGains() {
+    if (!this._ctx) return;
+    this._musicGain.gain.value = this._muted ? 0 : 0.38 * this._musicVol;
+    this._sfxGain.gain.value = this._muted ? 0 : 0.75 * this._sfxVol;
+  }
+
+  setMusicVolume(frac) {
+    this._musicVol = Math.max(0, Math.min(1, frac));
+    this._applyGains();
+  }
+
+  setSfxVolume(frac) {
+    this._sfxVol = Math.max(0, Math.min(1, frac));
+    this._applyGains();
   }
 
   _resume() {
@@ -260,9 +277,7 @@ class AudioManager {
 
   setMuted(muted) {
     this._muted = muted;
-    if (!this._ctx) return;
-    this._musicGain.gain.value = muted ? 0 : 0.38;
-    this._sfxGain.gain.value = muted ? 0 : 0.75;
+    this._applyGains();
   }
 
   // ── SFX ───────────────────────────────────────────────────────────────────

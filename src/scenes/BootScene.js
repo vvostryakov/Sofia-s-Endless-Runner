@@ -1,4 +1,4 @@
-import { W, H, STORAGE_KEYS, saveString, loadString, bestSummary, appVersionLabel } from '../constants.js';
+import { W, H, STORAGE_KEYS, saveString, loadString, loadVolume, hapticsEnabled, bestSummary, appVersionLabel } from '../constants.js';
 import { setupHiDPI } from '../projection.js';
 import { audio, unlockAudio, setAudioMuted } from '../audio.js';
 
@@ -10,6 +10,8 @@ export class BootScene extends Phaser.Scene {
     setupHiDPI(this);
     this.muted = loadString(STORAGE_KEYS.muted) === '1';
     setAudioMuted(this.muted);
+    audio.setMusicVolume(loadVolume(STORAGE_KEYS.musicVol) / 100);
+    audio.setSfxVolume(loadVolume(STORAGE_KEYS.sfxVol) / 100);
     this._buildBackground();
     this._showMenu();
 
@@ -85,6 +87,7 @@ export class BootScene extends Phaser.Scene {
     this._button(cx, cy + 108, 220, 48, 'RHYTHM RUN', () => this._startRun(true), 0x8e24aa);
     this._button(cx, cy + 164, 220, 40, 'HOW TO PLAY', () => this._showHowTo(), 0x3949ab);
     this._button(cx, cy + 214, 220, 36, this.muted ? 'SOUND: OFF' : 'SOUND: ON', () => this._toggleSound(), 0x455a64);
+    this._button(cx, cy + 258, 220, 36, 'SETTINGS', () => this._showSettings(), 0x37474f);
     this.panel.add(this.add.text(cx, H - 24, appVersionLabel(), {
       fontSize: '12px', fontFamily: 'Arial', fill: '#8fa7c7',
     }).setOrigin(0.5));
@@ -119,10 +122,50 @@ export class BootScene extends Phaser.Scene {
     }, 0xff6b6b);
   }
 
+  _showSettings() {
+    this.mode = 'settings';
+    this._clearPanel();
+    const cx = W / 2;
+    this.panel.add(this.add.rectangle(cx, H / 2, 350, 430, 0x000000, 0.8));
+    this.panel.add(this.add.text(cx, 175, 'SETTINGS', {
+      fontSize: '30px', fontFamily: 'Arial Black, Arial', fill: '#ffd700',
+    }).setOrigin(0.5));
+
+    const volumeRow = (y, label, key, applyFn, testFn) => {
+      const vol = loadVolume(key);
+      this.panel.add(this.add.text(cx, y - 26, label, {
+        fontSize: '14px', fontFamily: 'Arial Black, Arial', fill: '#b7e4ff',
+      }).setOrigin(0.5));
+      this.panel.add(this.add.text(cx, y + 6, `${vol}%`, {
+        fontSize: '20px', fontFamily: 'Arial Black, Arial', fill: '#ffffff',
+      }).setOrigin(0.5));
+      const step = (dir) => {
+        const next = Phaser.Math.Clamp(loadVolume(key) + dir * 20, 0, 100);
+        saveString(key, String(next));
+        applyFn(next / 100);
+        if (testFn) testFn();
+        this._showSettings();
+      };
+      this._button(cx - 110, y + 4, 48, 40, '−', () => step(-1), 0x455a64);
+      this._button(cx + 110, y + 4, 48, 40, '+', () => step(1), 0x455a64);
+    };
+
+    volumeRow(255, 'MUSIC', STORAGE_KEYS.musicVol, v => audio.setMusicVolume(v));
+    volumeRow(340, 'SFX', STORAGE_KEYS.sfxVol, v => audio.setSfxVolume(v), () => audio.coin());
+
+    const haptics = hapticsEnabled();
+    this._button(cx, 425, 220, 40, `HAPTICS: ${haptics ? 'ON' : 'OFF'}`, () => {
+      saveString(STORAGE_KEYS.haptics, haptics ? '0' : '1');
+      this._showSettings();
+    }, 0x5d4037);
+
+    this._button(cx, 495, 180, 48, 'BACK', () => this._showMenu(), 0xff6b6b);
+  }
+
   _activatePrimary() {
     unlockAudio();
-    if (this.mode === 'help') {
-      saveString(STORAGE_KEYS.seenHelp, '1');
+    if (this.mode === 'help' || this.mode === 'settings') {
+      if (this.mode === 'help') saveString(STORAGE_KEYS.seenHelp, '1');
       this._showMenu();
       return;
     }
