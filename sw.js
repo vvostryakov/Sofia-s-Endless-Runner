@@ -13,6 +13,7 @@ const PRECACHE = [
   'vendor/phaser.min.js',
   'src/main.js',
   'src/ui.js',
+  'src/runner.js',
   'src/constants.js',
   'src/projection.js',
   'src/worlds.js',

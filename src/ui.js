@@ -23,6 +23,33 @@ const css = (c) => `#${(c & 0xffffff).toString(16).padStart(6, '0')}`;
 const fmt = (n) => Math.floor(n).toLocaleString('en-US');
 const $ = (sel) => root.querySelector(sel);
 
+// ─── Inline SVG icons ─────────────────────────────────────────────────────────
+// Emoji render differently on every platform (and as grey boxes on some); a
+// dozen tiny vectors keep the chrome identical everywhere. Stroke icons use
+// currentColor so CSS can tint them; the coin keeps its own gold.
+const S = 'stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"';
+const ICONS = {
+  coin: '<circle cx="12" cy="12" r="9.5" fill="#f6c700"/><circle cx="12" cy="12" r="9.5" fill="none" stroke="#a87900" stroke-width="1.6"/><circle cx="12" cy="12" r="5.6" fill="none" stroke="#c79a00" stroke-width="1.8"/><path d="M12 8.6v6.8" stroke="#c79a00" stroke-width="1.8" stroke-linecap="round"/>',
+  run: `<circle cx="14.2" cy="4.4" r="2.3" fill="currentColor"/><path d="M13.5 8.2l-3.8 3.6 3 3-2.4 5.4M9.7 11.8L6.6 10M13.2 9l3.6 2.6 2.6-.8M12.7 14.8l3.5 2.5" ${S}/>`,
+  headphones: `<path d="M4.5 14.5v-2a7.5 7.5 0 0 1 15 0v2" ${S}/><rect x="3" y="13.5" width="4.4" height="7" rx="2" fill="currentColor"/><rect x="16.6" y="13.5" width="4.4" height="7" rx="2" fill="currentColor"/>`,
+  trophy: `<path d="M8 4.5h8v4.7a4 4 0 0 1-8 0z" fill="currentColor"/><path d="M8 6H4.7a3.3 3.3 0 0 0 3.4 3.3M16 6h3.3a3.3 3.3 0 0 1-3.4 3.3M12 13.3v3" ${S}/><path d="M7.8 20.5h8.4l-1.1-3.2H8.9z" fill="currentColor"/>`,
+  bank: `<path d="M4.2 9.5h15.6L18.4 19a2.2 2.2 0 0 1-2.2 1.9H7.8A2.2 2.2 0 0 1 5.6 19z" fill="currentColor"/><path d="M8.4 9.3a3.6 3.6 0 0 1 7.2 0" ${S}/>`,
+  shield: '<path d="M12 2.8l7 2.6v4.8c0 4.6-2.9 8.6-7 10.2-4.1-1.6-7-5.6-7-10.2V5.4z" fill="currentColor"/>',
+  magnet: '<path d="M7.2 3.8v7a4.8 4.8 0 0 0 9.6 0v-7" stroke="currentColor" stroke-width="4.2" fill="none"/><path d="M7.2 3.6v3.4M16.8 3.6v3.4" stroke="#ffffff" stroke-opacity=".85" stroke-width="4.2"/>',
+  bag: `<path d="M5.8 8.2h12.4l-1 11.2a1.8 1.8 0 0 1-1.8 1.6H8.6a1.8 1.8 0 0 1-1.8-1.6z" fill="currentColor"/><path d="M9 8a3 3 0 0 1 6 0" ${S}/>`,
+  book: '<path d="M4 5.2c2.6-1.3 5.2-1.3 7.4.2v13.4C9.2 17.3 6.6 17.3 4 18.6zM20 5.2c-2.6-1.3-5.2-1.3-7.4.2v13.4c2.2-1.5 4.8-1.5 7.4-.2z" fill="currentColor"/>',
+  gear: `<circle cx="12" cy="12" r="3.4" ${S}/><path d="M12 2.6v3M12 18.4v3M2.6 12h3M18.4 12h3M5.4 5.4l2.1 2.1M16.5 16.5l2.1 2.1M18.6 5.4l-2.1 2.1M7.5 16.5l-2.1 2.1" ${S}/>`,
+  note: `<path d="M9.2 18.3V6.2l9.2-2.1v11.8" ${S}/><circle cx="6.6" cy="18.4" r="2.7" fill="currentColor"/><circle cx="15.8" cy="16" r="2.7" fill="currentColor"/>`,
+  bell: `<path d="M12 3.4a5.7 5.7 0 0 1 5.7 5.7c0 3.1.9 4.8 1.8 5.9H4.5c.9-1.1 1.8-2.8 1.8-5.9A5.7 5.7 0 0 1 12 3.4z" fill="currentColor"/><path d="M9.8 18.6a2.3 2.3 0 0 0 4.4 0" ${S}/>`,
+  speaker: `<path d="M4 9.2v5.6h3.4L13 19V5L7.4 9.2z" fill="currentColor"/><path d="M16 9.4a4.3 4.3 0 0 1 0 5.2M18.6 6.8a8 8 0 0 1 0 10.4" ${S}/>`,
+  buzz: `<rect x="8.2" y="3.4" width="7.6" height="17.2" rx="2.2" fill="currentColor"/><path d="M4.6 8.6a7 7 0 0 0 0 6.8M19.4 8.6a7 7 0 0 1 0 6.8" ${S}/>`,
+  home: '<path d="M4 11.2L12 4l8 7.2v8.1a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19.3z" fill="currentColor"/>',
+  pause: '<rect x="6.4" y="4.8" width="3.8" height="14.4" rx="1.5" fill="currentColor"/><rect x="13.8" y="4.8" width="3.8" height="14.4" rx="1.5" fill="currentColor"/>',
+  play: '<path d="M8.2 5.2v13.6L19 12z" fill="currentColor"/>',
+  redo: `<path d="M18.8 12.2a6.8 6.8 0 1 1-2.2-5" ${S}/><path d="M19 3.6v4h-4" ${S}/>`,
+};
+const ic = (name, cls = '') => `<span class="ic${cls ? ' ' + cls : ''}"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">${ICONS[name]}</svg></span>`;
+
 export function initUI(game) {
   if (root) return;
   root = document.createElement('div');
@@ -102,16 +129,16 @@ function renderHome() {
         <span class="title-sub">SWIPE · JUMP · VIBE</span>
       </header>
       <div class="best-row">
-        <div class="chip"><span>🏃 BEST</span><b>${fmt(loadNumber(run.score))}</b></div>
-        <div class="chip"><span>🎧 RHYTHM</span><b>${fmt(loadNumber(ry.score))}</b></div>
-        <div class="chip gold"><span>🪙</span><b>${fmt(getWallet())}</b></div>
+        <div class="chip"><span>${ic('run')} BEST</span><b>${fmt(loadNumber(run.score))}</b></div>
+        <div class="chip"><span>${ic('headphones')} RHYTHM</span><b>${fmt(loadNumber(ry.score))}</b></div>
+        <div class="chip gold"><span>${ic('coin')}</span><b>${fmt(getWallet())}</b></div>
       </div>
-      <button class="btn-play" data-a="play">▶&nbsp; PLAY</button>
+      <button class="btn-play" data-a="play">${ic('play')} PLAY</button>
       <div class="menu-grid">
-        <button class="btn-tile" data-a="rhythm"><i>🎧</i>Rhythm Run</button>
-        <button class="btn-tile" data-a="shop"><i>🛍️</i>Shop</button>
-        <button class="btn-tile" data-a="help"><i>📖</i>How to play</button>
-        <button class="btn-tile" data-a="settings"><i>⚙️</i>Settings</button>
+        <button class="btn-tile" data-a="rhythm">${ic('headphones')}Rhythm Run</button>
+        <button class="btn-tile" data-a="shop">${ic('bag')}Shop</button>
+        <button class="btn-tile" data-a="help">${ic('book')}How to play</button>
+        <button class="btn-tile" data-a="settings">${ic('gear')}Settings</button>
       </div>
       <footer class="menu-foot">${appVersionLabel()}</footer>
     </div>`;
@@ -150,7 +177,7 @@ function renderShop() {
     const isEq = o.id === eq;
     const isOwned = owned.includes(o.id);
     const state = isEq ? 'wearing' : isOwned ? 'equip' : wallet >= o.price ? 'buy' : 'locked';
-    const label = isEq ? 'WEARING' : isOwned ? 'EQUIP' : o.price === 0 ? 'FREE' : `${o.price} 🪙`;
+    const label = isEq ? 'WEARING' : isOwned ? 'EQUIP' : o.price === 0 ? 'FREE' : `${o.price} ${ic('coin')}`;
     return `
       <div class="fit-card ${isEq ? 'eq' : ''}">
         <div class="fit-fig">
@@ -163,7 +190,7 @@ function renderShop() {
         <button class="fit-btn ${state}" data-fit="${o.id}">${label}</button>
       </div>`;
   }).join('');
-  menuEl.innerHTML = panel('OUTFITS', `<div class="shop-wallet">🪙 ${fmt(wallet)} in the bank</div><div class="fit-grid">${cards}</div>`);
+  menuEl.innerHTML = panel('OUTFITS', `<div class="shop-wallet">${ic('coin')} ${fmt(wallet)} in the bank</div><div class="fit-grid">${cards}</div>`);
   wireActs(menuEl, { back: renderHome });
   menuEl.querySelectorAll('[data-fit]').forEach((b) =>
     b.addEventListener('click', () => {
@@ -193,10 +220,10 @@ function renderSettings() {
   const sv = loadVolume(STORAGE_KEYS.sfxVol);
   const muted = loadString(STORAGE_KEYS.muted) === '1';
   menuEl.innerHTML = panel('SETTINGS', `
-    <label class="set-row"><span>🎵 Music</span><input type="range" id="set-music" min="0" max="100" step="5" value="${mv}"><b id="set-music-v">${mv}%</b></label>
-    <label class="set-row"><span>🔔 SFX</span><input type="range" id="set-sfx" min="0" max="100" step="5" value="${sv}"><b id="set-sfx-v">${sv}%</b></label>
-    <div class="set-row"><span>🔊 Sound</span><button class="switch ${muted ? '' : 'on'}" id="set-mute"></button></div>
-    <div class="set-row"><span>📳 Haptics</span><button class="switch ${hapticsEnabled() ? 'on' : ''}" id="set-haptics"></button></div>`);
+    <label class="set-row"><span>${ic('note')} Music</span><input type="range" id="set-music" min="0" max="100" step="5" value="${mv}"><b id="set-music-v">${mv}%</b></label>
+    <label class="set-row"><span>${ic('bell')} SFX</span><input type="range" id="set-sfx" min="0" max="100" step="5" value="${sv}"><b id="set-sfx-v">${sv}%</b></label>
+    <div class="set-row"><span>${ic('speaker')} Sound</span><button class="switch ${muted ? '' : 'on'}" id="set-mute"></button></div>
+    <div class="set-row"><span>${ic('buzz')} Haptics</span><button class="switch ${hapticsEnabled() ? 'on' : ''}" id="set-haptics"></button></div>`);
   wireActs(menuEl, { back: renderHome });
 
   const music = $('#set-music');
@@ -255,17 +282,17 @@ export function showHUD({ rhythm = false, bpm = 0, onPause }) {
     <div class="hud-top">
       <div class="hud-score"><label>SCORE</label><span id="h-score">0</span></div>
       <div class="hud-side">
-        <div class="hud-coins">🪙 <b id="h-coins">0</b></div>
-        <button id="h-pause" aria-label="Pause">❚❚</button>
+        <div class="hud-coins">${ic('coin')} <b id="h-coins">0</b></div>
+        <button id="h-pause" aria-label="Pause">${ic('pause')}</button>
       </div>
     </div>
     <div class="hud-sub">
       <div class="hud-combo"><b id="h-combo">x1.0</b><div class="combo-track"><i id="h-combo-fill"></i></div></div>
-      <div class="hud-mode" id="h-mode">${rhythm ? `🎧 ${bpm} BPM` : 'LEVEL 1'}</div>
+      <div class="hud-mode" id="h-mode">${rhythm ? `${bpm} BPM` : 'LEVEL 1'}</div>
     </div>
     <div class="hud-pows">
-      <div class="pow off" id="h-magnet"><i id="h-magnet-ring"></i><span>🧲</span></div>
-      <div class="pow off" id="h-shield"><span>🛡️</span></div>
+      <div class="pow off" id="h-magnet"><i id="h-magnet-ring"></i>${ic('magnet', 'i-mag')}</div>
+      <div class="pow off" id="h-shield">${ic('shield', 'i-shield')}</div>
     </div>
     <div class="hud-world" id="h-world"></div>`;
   $('#h-pause').addEventListener('click', () => { unlockAudio(); onPause(); });
@@ -342,9 +369,9 @@ export function showPause({ onResume, onRestart, onMenu }) {
     <div class="dim"></div>
     <div class="modal-card">
       <h2>PAUSED</h2>
-      <button class="btn-play sm" data-a="resume">▶&nbsp; RESUME</button>
-      <button class="btn-ghost" data-a="restart">↻ &nbsp;RESTART</button>
-      <button class="btn-ghost" data-a="menu">🏠 &nbsp;MAIN MENU</button>
+      <button class="btn-play sm" data-a="resume">${ic('play')} RESUME</button>
+      <button class="btn-ghost" data-a="restart">${ic('redo')} RESTART</button>
+      <button class="btn-ghost" data-a="menu">${ic('home')} MAIN MENU</button>
     </div>`;
   wireActs(modalEl, { resume: onResume, restart: onRestart, menu: onMenu });
 }
@@ -365,13 +392,13 @@ export function showGameOver(o) {
       <p class="go-reason">${o.reason}</p>
       <div class="go-score">${fmt(o.score)}</div>
       <div class="go-row">
-        <div class="chip"><span>🪙 RUN</span><b>${fmt(o.coins)}</b></div>
-        <div class="chip"><span>🏆 BEST</span><b>${fmt(o.bestScore)}</b></div>
-        <div class="chip gold"><span>👛 BANK</span><b>${fmt(o.wallet)}</b></div>
+        <div class="chip"><span>${ic('coin')} RUN</span><b>${fmt(o.coins)}</b></div>
+        <div class="chip"><span>${ic('trophy')} BEST</span><b>${fmt(o.bestScore)}</b></div>
+        <div class="chip gold"><span>${ic('bank')} BANK</span><b>${fmt(o.wallet)}</b></div>
       </div>
       ${rhythm}
-      <button class="btn-play" data-a="again">▶&nbsp; RUN AGAIN</button>
-      <button class="btn-ghost" data-a="menu">🏠 &nbsp;MAIN MENU</button>
+      <button class="btn-play" data-a="again">${ic('play')} RUN AGAIN</button>
+      <button class="btn-ghost" data-a="menu">${ic('home')} MAIN MENU</button>
     </div>`;
   wireActs(modalEl, { again: o.onRestart, menu: o.onMenu });
   if (o.newBest) {
