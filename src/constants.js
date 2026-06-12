@@ -29,8 +29,10 @@ export const RHYTHM_APPROACH_BEATS = 6;
 export const RHYTHM_APPROACH_MS = RHYTHM_BEAT_MS * RHYTHM_APPROACH_BEATS;
 export const RHYTHM_BEAT_WINDOW_MS = 160;
 export const RHYTHM_LANES = [1, 1, 2, 1, 0, 1, 2, 2, 1, 0, 0, 1, 2, 1, 0, 1];
-export const TURN_MAX_OFFSET = 34;
-export const TURN_NEAR_FACTOR = 0.05;
+// Horizon-x swing of a full curve. The bend falls off with (1-t)² (see
+// projection.js cam3), so it needs a wider swing than the old linear shear
+// to read as a real curve.
+export const TURN_MAX_OFFSET = 80;
 export const TURN_CHANGE_MIN_MS = 2400;
 export const TURN_CHANGE_MAX_MS = 4300;
 export const LANE_SIDE = [-1, 0, 1];

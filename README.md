@@ -48,10 +48,11 @@ Layout:
 
 - `src/main.js` — Phaser config + entry point
 - `src/constants.js` — tuning constants and persistent-storage helpers
-- `src/projection.js` — pseudo-3D camera math (z → screen)
+- `src/projection.js` — pseudo-3D camera (z → screen, curve bend, hills, distance fog)
+- `src/ui.js` + `ui.css` — DOM UI layer: menus, HUD, modals rendered as HTML/CSS on a 400×700 surface scaled to match the canvas
 - `src/worlds.js` — world themes and scenery drawing
 - `src/audio.js` — procedural Web Audio music + SFX
-- `src/scenes/BootScene.js`, `src/scenes/GameScene.js` — menu and gameplay
+- `src/scenes/BootScene.js`, `src/scenes/GameScene.js` — menu backdrop and gameplay (chrome lives in `src/ui.js`)
 - `vendor/phaser.min.js` — vendored Phaser 3.60 (no CDN dependency)
 
 Optional syntax check (if Node is installed): `node --check src/scenes/GameScene.js` etc.
