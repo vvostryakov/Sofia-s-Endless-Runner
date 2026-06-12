@@ -1,7 +1,7 @@
 // Service worker: cache-first offline support. The cache name embeds the
 // deployed commit (the workflow rewrites APP_VERSION below), so every deploy
 // gets a fresh cache and activate() drops the old ones.
-const APP_VERSION = 'd27de2d';
+const APP_VERSION = '49793a3';
 const CACHE = `ser-${APP_VERSION}`;
 
 const PRECACHE = [
@@ -9,8 +9,10 @@ const PRECACHE = [
   'index.html',
   'version.js',
   'manifest.webmanifest',
+  'ui.css',
   'vendor/phaser.min.js',
   'src/main.js',
+  'src/ui.js',
   'src/constants.js',
   'src/projection.js',
   'src/worlds.js',
