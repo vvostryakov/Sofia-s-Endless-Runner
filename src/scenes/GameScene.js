@@ -5,20 +5,21 @@ import {
   SCORE_PER_SECOND, COIN_SCORE, SHIELD_SCORE, MAGNET_SCORE, SLIDE_DURATION,
   MAGNET_DURATION, DOUBLE_JUMP_INIT, SAFE_START_MS,
   RHYTHM_APPROACH_BEATS, RHYTHM_BEAT_WINDOW_MS, RHYTHM_LANES,
-  TURN_MAX_OFFSET, TURN_NEAR_FACTOR, TURN_CHANGE_MIN_MS, TURN_CHANGE_MAX_MS,
-  LANE_SIDE, STORAGE_KEYS, saveNumber, loadNumber, bestKeys, bestSummary, vibrate,
+  TURN_MAX_OFFSET, TURN_CHANGE_MIN_MS, TURN_CHANGE_MAX_MS,
+  LANE_SIDE, saveNumber, loadNumber, bestKeys, vibrate,
 } from '../constants.js';
 import {
-  setupHiDPI, VP_X, NEAR_Y, HORIZON_Y, SPAWN_Z, TRACK_NEAR_HW,
+  setupHiDPI, NEAR_Y, HORIZON_Y, SPAWN_Z, TRACK_NEAR_HW,
   COLLECTION_RADIUS, PLAYER_ANCHOR_Y, PLAYER_DRAW_SCALE, PLAYER_VISUAL_LIFT,
-  TIE_SPACING, zT, zY, zSc, zTopY,
+  TIE_SPACING, zT, zY, zSc, zTopY, tY, centerX, fogAt, cam3,
 } from '../projection.js';
 import {
   WORLDS, WORLD_SCORE, bdJungle, bdSavanna, bdReef, bdDeep,
   drawWorldWall, drawWorldScenery,
 } from '../worlds.js';
 import { audio, unlockAudio, RHYTHM_TRACK_INFO } from '../audio.js';
-import { equippedOutfit, addToWallet } from '../cosmetics.js';
+import { equippedOutfit, addToWallet, getWallet } from '../cosmetics.js';
+import * as UI from '../ui.js';
 
 // ─── Game scene ───────────────────────────────────────────────────────────────
 export class GameScene extends Phaser.Scene {
@@ -35,15 +36,16 @@ export class GameScene extends Phaser.Scene {
   create() {
     // Clear references to display objects from a previous run of this scene —
     // after scene.restart they point at destroyed objects and must not be used.
-    this.worldBanner = null;
     this.hitLineG = null;
     this.hitLineGlow = null;
     this.beatHalo = null;
-    this.beatTxt = null;
-    this.pauseOverlay = null;
     this.camBase = setupHiDPI(this);
     this.cameras.main.setRotation(0);
     this.cam = { x: 0, vel: 0, lean: 0, dip: 0, dipVel: 0 };
+    this.hill = 0;
+    this.targetHill = 0;
+    this.nextHillAt = 2600;
+    cam3.x = 0; cam3.bend = 0; cam3.hill = 0;
     this.landSquash = 0;
     this.flipT = 0;
     this.lastNearMiss = 0;
@@ -73,7 +75,6 @@ export class GameScene extends Phaser.Scene {
     this.trackTurn = 0;
     this.targetTrackTurn = 0;
     this.nextTurnAt = TURN_CHANGE_MIN_MS;
-    this.turnSway = 0;
     this.nextRhythmBeat = RHYTHM_APPROACH_BEATS;
     this.lastBeatPulse = -1;
     this.musicTime = 0;
@@ -100,7 +101,12 @@ export class GameScene extends Phaser.Scene {
     this._buildHitLine();
     this._buildSpeedLines();
     this._buildPlayer();
-    this._buildUI();
+    UI.showHUD({
+      rhythm: this.rhythmMode,
+      bpm: this.rhythmBpm,
+      onPause: () => this._togglePause(),
+    });
+    UI.setWorld(WORLDS[this.worldIdx]);
     this._buildControls();
     if (!this.rhythmMode) this._scheduleNextSpawn(900);
 
@@ -136,7 +142,7 @@ export class GameScene extends Phaser.Scene {
     const w = WORLDS[this.worldIdx];
     this._buildWorldBackdrop(w);
     this._buildWorldScenery(w);
-    if (this.worldBanner) this._refreshWorldBanner();
+    this._refreshWorldBanner();
   }
 
   _regW(gfx) { this._worldGfx.push(gfx); return gfx; }
@@ -145,10 +151,11 @@ export class GameScene extends Phaser.Scene {
     const g = this._regW(this.add.graphics().setDepth(0));
     this.bdG = g; // drifts sideways with track turns for horizon parallax
     const mid = HORIZON_Y * 0.55;
+    // Overscan top/bottom: the whole backdrop shifts with the hill bend
     g.fillGradientStyle(w.sky[0],w.sky[0],w.sky[1],w.sky[1],1);
-    g.fillRect(-60,0,W+120,mid);
+    g.fillRect(-60,-44,W+120,mid+44);
     g.fillGradientStyle(w.sky[1],w.sky[1],w.sky[2],w.sky[2],1);
-    g.fillRect(-60,mid,W+120,H-mid);
+    g.fillRect(-60,mid,W+120,H-mid+44);
 
     if      (w.id==='jungle')  bdJungle(g, w);
     else if (w.id==='savanna') bdSavanna(g, w);
@@ -195,6 +202,7 @@ export class GameScene extends Phaser.Scene {
       const y = zY(s.z);
       const hw = this._trackHalfWidth(t);
       s.gfx.clear();
+      s.gfx.setAlpha(1 - fogAt(s.z) * 0.88);
       if(s.kind==='wall'){
         const sideX = this._curveCenterX(t) + s.side * (hw + (7 + s.jitter*8) * sc);
         drawWorldWall(s.gfx,w,sideX,y,sc,s.side,s.jitter);
@@ -211,14 +219,12 @@ export class GameScene extends Phaser.Scene {
     if(this.worldIdx>=WORLDS.length-1||this.score<this.worldNext) return;
     this.worldIdx++; this.worldNext+=WORLD_SCORE;
     this._buildWorldLayer();
-    const w=WORLDS[this.worldIdx];
-    const flash=this.add.text(W/2,H/2,`WORLD ${w.no}\n${w.name}`,{fontSize:'28px',fontFamily:'Arial Black,Arial',fill:w.accentStr,stroke:'#000000',strokeThickness:6,align:'center'}).setOrigin(0.5).setDepth(50).setAlpha(1);
-    this.tweens.add({targets:flash,alpha:0,y:H/2-50,duration:1800,ease:'Power2',onComplete:()=>flash.destroy()});
+    UI.worldBanner(WORLDS[this.worldIdx]);
+    audio.powerUp();
   }
 
   _refreshWorldBanner() {
-    const w=WORLDS[this.worldIdx];
-    if(this.worldBanner) this.worldBanner.setText(`WORLD ${w.no} · ${w.name}`).setStyle({fill:w.accentStr});
+    UI.setWorld(WORLDS[this.worldIdx]);
   }
 
   // ── Static background ───────────────────────────────────────────────────────
@@ -234,16 +240,8 @@ export class GameScene extends Phaser.Scene {
     return TRACK_NEAR_HW * Phaser.Math.Clamp(t, 0, 1.5) * boost;
   }
 
-  _curveOffset(t) {
-    const horizonWeight = 1 - t * (1 - TURN_NEAR_FACTOR);
-    return this.trackTurn * horizonWeight + Math.sin((t + this.turnSway) * Math.PI) * this.trackTurn * 0.1 * (1 - t);
-  }
-
   _curveCenterX(t) {
-    // Lateral camera offset: near geometry shifts fully, the vanishing point
-    // stays put — pure camera translation, so lane changes slide the world.
-    const camX = this.cam ? this.cam.x : 0;
-    return VP_X + this._curveOffset(t) - camX * Math.min(t, 1.5);
+    return centerX(t);
   }
 
   _laneXZ(lane, z) {
@@ -259,9 +257,15 @@ export class GameScene extends Phaser.Scene {
       this.targetTrackTurn = Phaser.Utils.Array.GetRandom(options) * TURN_MAX_OFFSET;
       this.nextTurnAt = this.runTime + Phaser.Math.Between(TURN_CHANGE_MIN_MS, TURN_CHANGE_MAX_MS);
     }
+    if (this.runTime >= this.nextHillAt) {
+      this.targetHill = Math.random() < 0.3 ? 0 : Phaser.Math.FloatBetween(-26, 34);
+      this.nextHillAt = this.runTime + Phaser.Math.Between(4200, 7800);
+    }
     const dt = delta / 1000;
     this.trackTurn += (this.targetTrackTurn - this.trackTurn) * Math.min(1, dt * 0.9);
-    this.turnSway = (this.turnSway + dt * 0.08) % 1;
+    this.hill += (this.targetHill - this.hill) * Math.min(1, dt * 0.45);
+    cam3.bend = this.trackTurn;
+    cam3.hill = this.hill;
   }
 
   _updateCamera(dt) {
@@ -270,6 +274,7 @@ export class GameScene extends Phaser.Scene {
     const target = LANE_SIDE[this.pLane] * TRACK_NEAR_HW * 0.667 * 0.8;
     this.cam.vel += ((target - this.cam.x) * 70 - this.cam.vel * 16) * dt;
     this.cam.x += this.cam.vel * dt;
+    cam3.x = this.cam.x;
 
     // Roll into the strafe, ease back upright
     const leanTarget = Phaser.Math.Clamp(this.cam.vel * 0.00035, -0.04, 0.04);
@@ -320,6 +325,7 @@ export class GameScene extends Phaser.Scene {
     // The collection-field rings are a rhythm-mode timing aid; in the normal
     // endless run they were just visual clutter around the player.
     if (!this.rhythmMode) return;
+    this.beatHalo = this.add.circle(W / 2, PLAYER_ANCHOR_Y - 40, COLLECTION_RADIUS, 0xfff176, 0.08).setStrokeStyle(3, 0xfff176, 0.45).setDepth(16);
     this.hitLineG = this.add.graphics().setDepth(18);
     this.hitLineGlow = this.add.rectangle(W / 2, PLAYER_ANCHOR_Y - 40, W, 1, 0x00e5ff, 0.08).setDepth(17);
     this._redrawHitLine();
@@ -398,7 +404,7 @@ export class GameScene extends Phaser.Scene {
     const left = [], right = [], lane1 = [], lane2 = [];
     for (let i = 0; i <= segments; i++) {
       const t = tMin + (i / segments) * (tMax - tMin);
-      const y = HORIZON_Y + t * (NEAR_Y - HORIZON_Y);
+      const y = tY(t);
       const cx = this._curveCenterX(t);
       const hw = this._trackHalfWidth(t);
       left.push({ x: cx - hw, y });
@@ -415,9 +421,11 @@ export class GameScene extends Phaser.Scene {
       g.strokePath();
     };
 
-    // Ground fill: extends to screen bottom so the camera-floor wraps the player
+    // Ground fill: extends to screen bottom so the camera-floor wraps the
+    // player; the top edge follows the hill so crests rise against the sky
+    const groundTop = HORIZON_Y + Math.min(0, this.hill) - 2;
     g.fillGradientStyle(w.grd.far, w.grd.far, w.grd.near, w.grd.near, 1);
-    g.fillRect(0, HORIZON_Y, W, H - HORIZON_Y);
+    g.fillRect(0, groundTop, W, H - groundTop);
 
     // Track surface: alternating tie quads locked to world distance, so the
     // ground scrolls in exactly the same z-space as obstacles and coins.
@@ -433,7 +441,7 @@ export class GameScene extends Phaser.Scene {
       const cx0 = this._curveCenterX(t0), cx1 = this._curveCenterX(t1);
       const hw0 = this._trackHalfWidth(t0), hw1 = this._trackHalfWidth(t1);
       const base = tile % 2 === 0 ? w.grd.tieA : w.grd.tieB;
-      g.fillStyle(base, 0.5 + t1 * 0.35);
+      g.fillStyle(base, (0.5 + t1 * 0.35) * (1 - fogAt(z0) * 0.55));
       g.fillPoints([
         { x: cx1 - hw1, y: y1 },
         { x: cx1 + hw1, y: y1 },
@@ -450,11 +458,12 @@ export class GameScene extends Phaser.Scene {
     strokeLine(left, 4, w.grd.edge, 0.92 + comboEnergy * 0.08);
     strokeLine(right, 4, w.grd.edge, 0.92 + comboEnergy * 0.08);
 
-    // Horizon glow line in accent colour
+    // Horizon glow line in accent colour, tracking the hill bend
+    const hy = HORIZON_Y + this.hill;
     hg.lineStyle(14, w.accent, 0.07 + comboEnergy * 0.06);
-    hg.beginPath(); hg.moveTo(0, HORIZON_Y); hg.lineTo(W, HORIZON_Y); hg.strokePath();
+    hg.beginPath(); hg.moveTo(0, hy); hg.lineTo(W, hy); hg.strokePath();
     hg.lineStyle(2.5, w.accent, 0.75 + comboEnergy * 0.2);
-    hg.beginPath(); hg.moveTo(0, HORIZON_Y); hg.lineTo(W, HORIZON_Y); hg.strokePath();
+    hg.beginPath(); hg.moveTo(0, hy); hg.lineTo(W, hy); hg.strokePath();
   }
 
   _buildPlayer() {
@@ -581,60 +590,6 @@ export class GameScene extends Phaser.Scene {
     this.vis.bow.setPosition(headX + pos(sliding ? -14 : 9), headY + pos(sliding ? -9 : -9)).setScale(ps).setRotation(sliding ? Math.PI * 0.75 : -Math.PI / 4);
   }
 
-  _buildUI() {
-    this.uiPanel = this.add.rectangle(W / 2, 38, W, 76, 0x020711, 0.58).setDepth(20);
-    this.add.rectangle(W / 2, 77, W, 2, 0x00e5ff, 0.14).setDepth(21);
-
-    // Gameplay-first HUD: combo is the primary rhythm reward, score is second,
-    // coins and powerups are secondary, and technical BPM/beat data is tucked
-    // below the main readout.
-    this.comboTxt = this.add.text(W / 2, 30, 'x1.0', {
-      fontSize: '38px', fontFamily: 'Arial Black, Arial', fill: '#fff176', stroke: '#241a00', strokeThickness: 5,
-    }).setOrigin(0.5).setDepth(22);
-    this.comboLabel = this.add.text(W / 2, 62, 'COMBO', {
-      fontSize: '10px', fontFamily: 'Arial Black, Arial', fill: '#ffe082', letterSpacing: 2,
-    }).setOrigin(0.5).setDepth(22).setAlpha(0.82);
-
-    this.scoreLabel = this.add.text(58, 16, 'SCORE', {
-      fontSize: '9px', fontFamily: 'Arial Black, Arial', fill: '#89dfff', letterSpacing: 2,
-    }).setOrigin(0.5).setDepth(22).setAlpha(0.72);
-    this.scoreTxt = this.add.text(58, 39, '0', {
-      fontSize: '24px', fontFamily: 'Arial Black, Arial', fill: '#ffffff', stroke: '#00121f', strokeThickness: 4,
-    }).setOrigin(0.5).setDepth(22);
-
-    this.add.circle(W - 110, 32, 9, 0xffd700).setDepth(22);
-    this.coinTxt = this.add.text(W - 52, 32, '0', {
-      fontSize: '19px', fontFamily: 'Arial Black, Arial', fill: '#ffd700', stroke: '#1b1200', strokeThickness: 3,
-    }).setOrigin(1, 0.5).setDepth(22);
-    this.modeTxt = this.add.text(W / 2, 82, this.rhythmMode ? 'RHYTHM RUN' : 'ENDLESS RUN', {
-      fontSize: '10px', fontFamily: 'Arial Black, Arial', fill: '#b2ebff', letterSpacing: 2,
-    }).setOrigin(0.5).setDepth(22).setAlpha(0.56);
-
-    this.magnetBadge = this.add.graphics().setDepth(21);
-    this.shieldBadge = this.add.graphics().setDepth(21);
-
-    if (this.rhythmMode) {
-      this.beatHalo = this.add.circle(W / 2, PLAYER_ANCHOR_Y - 40, COLLECTION_RADIUS, 0xfff176, 0.08).setStrokeStyle(3, 0xfff176, 0.45).setDepth(16);
-      this.beatTxt = this.add.text(W / 2, 112, `${this.rhythmBpm} BPM`, {
-        fontSize: '10px', fontFamily: 'Arial Black, Arial', fill: '#fff176', stroke: '#000', strokeThickness: 3,
-      }).setOrigin(0.5).setDepth(21).setAlpha(0.58);
-    }
-
-    this.pauseBtn = this.add.rectangle(W - 28, 32, 34, 34, 0x17212f, 0.94).setInteractive({ useHandCursor: true }).setDepth(22);
-    this.pauseBtn.setStrokeStyle(1, 0x80deea, 0.45);
-    this.add.text(W - 28, 32, 'II', { fontSize: '16px', fontFamily: 'Arial Black, Arial', fill: '#dff7ff' }).setOrigin(0.5).setDepth(23);
-    this.pauseBtn.on('pointerdown', () => { unlockAudio(); this._togglePause(); });
-    this._updatePowerUI();
-    this._updateShieldUI();
-
-    // World banner
-    const w0 = WORLDS[0];
-    this.worldBanner = this.add.text(W/2, H-26, `WORLD ${w0.no} · ${w0.name}`, {
-      fontSize:'12px', fontFamily:'Arial Black,Arial', fill:w0.accentStr,
-      stroke:'#000000', strokeThickness:4, backgroundColor:'#00000088', padding:{x:9,y:4},
-    }).setOrigin(0.5).setDepth(22);
-  }
-
   _buildControls() {
     this.cursors = this.input.keyboard.createCursorKeys();
     this.wKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W);
@@ -722,44 +677,43 @@ export class GameScene extends Phaser.Scene {
       audio.stop();
       this.tweens.pauseAll();
       this.time.paused = true;
-      this._showPauseOverlay();
+      UI.showPause({
+        onResume: () => this._togglePause(),
+        onRestart: () => {
+          this._unfreeze();
+          UI.hidePause();
+          this.scene.restart({ rhythmMode: this.rhythmMode, rhythmTrack: this.rhythmTrack });
+        },
+        onMenu: () => this._exitToMenu(),
+      });
     } else {
       if (this.rhythmMode) audio.playRhythm(this.rhythmTrack);
       else audio.playGame();
       this.tweens.resumeAll();
       this.time.paused = false;
-      this._hidePauseOverlay();
+      UI.hidePause();
       this._showCountdown('GO');
     }
   }
 
-  _showPauseOverlay() {
-    this.pauseOverlay = this.add.container(0, 0).setDepth(40);
-    this.pauseOverlay.add(this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.62));
-    this.pauseOverlay.add(this.add.text(W / 2, H / 2 - 78, 'PAUSED', {
-      fontSize: '40px', fontFamily: 'Arial Black, Arial', fill: '#ffffff',
-    }).setOrigin(0.5));
-    const resume = this.add.rectangle(W / 2, H / 2 + 5, 210, 54, 0xff6b6b).setInteractive({ useHandCursor: true });
-    const menu = this.add.rectangle(W / 2, H / 2 + 76, 210, 44, 0x455a64).setInteractive({ useHandCursor: true });
-    this.pauseOverlay.add([resume, menu]);
-    this.pauseOverlay.add(this.add.text(W / 2, H / 2 + 5, 'RESUME', { fontSize: '22px', fontFamily: 'Arial Black, Arial', fill: '#fff' }).setOrigin(0.5));
-    this.pauseOverlay.add(this.add.text(W / 2, H / 2 + 76, 'MAIN MENU', { fontSize: '18px', fontFamily: 'Arial Black, Arial', fill: '#fff' }).setOrigin(0.5));
-    resume.on('pointerdown', () => { unlockAudio(); this._togglePause(); });
-    menu.on('pointerdown', () => { unlockAudio(); audio.stop(); this.scene.start('Boot'); });
+  // The scene clock and tween manager survive scene transitions, so anything
+  // that leaves a paused run must unfreeze them or the next run starts dead.
+  _unfreeze() {
+    this.tweens.resumeAll();
+    this.time.paused = false;
+    this.pausedRun = false;
   }
 
-  _hidePauseOverlay() {
-    if (this.pauseOverlay) {
-      this.pauseOverlay.destroy(true);
-      this.pauseOverlay = null;
-    }
+  _exitToMenu() {
+    this._unfreeze();
+    audio.stop();
+    UI.hidePause();
+    UI.hideHUD();
+    this.scene.start('Boot');
   }
 
   _showCountdown(text = 'READY') {
-    const msg = this.add.text(W / 2, H / 2 - 70, text, {
-      fontSize: '34px', fontFamily: 'Arial Black, Arial', fill: '#ffffff', stroke: '#000000', strokeThickness: 5,
-    }).setOrigin(0.5).setDepth(35);
-    this.tweens.add({ targets: msg, y: msg.y - 28, alpha: 0, duration: 850, ease: 'Power2', onComplete: () => msg.destroy() });
+    UI.countdown(text);
   }
 
   // ── Rhythm mode helpers ────────────────────────────────────────────────────
@@ -1120,7 +1074,9 @@ export class GameScene extends Phaser.Scene {
     const sy = zY(z);
     const sc = zSc(z);
     const visible = z <= SPAWN_Z * 1.05;
-    obj.parts.forEach(part => part.setVisible(visible));
+    // Distance fog: objects condense out of the haze instead of popping in
+    const fogA = 1 - fogAt(z) * 0.94;
+    obj.parts.forEach(part => { part.setVisible(visible); if (visible) part.setAlpha(fogA); });
     if (!visible) return;
 
     const t = zT(z);
@@ -1341,7 +1297,7 @@ export class GameScene extends Phaser.Scene {
         });
         this.combo = Math.min(this.combo + 1, 5);
         this._addScore(collected * COIN_SCORE * this.combo, `Combo x${this.combo}`);
-        this.coinTxt.setText(this.coinCount);
+        UI.setCoins(this.coinCount);
         audio.coin();
         audio.land();
       } else if (this.jumpH < WAGON_TOP - 8) {
@@ -1366,60 +1322,18 @@ export class GameScene extends Phaser.Scene {
     }
     this.combo = Math.min(this.combo + (obj.hitTime && rhythmBonus > 0 ? 0.4 : 0.25), 5);
     this._addScore(Math.round((COIN_SCORE + rhythmBonus) * this.combo), label || rhythmLabel || (this.combo >= 2 ? `Streak x${this.combo.toFixed(1)}` : null));
-    this.coinTxt.setText(this.coinCount);
+    UI.setCoins(this.coinCount);
     this._coinPop(obj.coin.x, obj.coin.y);
     this._collectionFeedback(obj.coin.x, obj.coin.y, obj.hitTime ? 0xfff176 : 0xffd700);
     audio.coin();
   }
 
-  // Icon badges with a radial countdown for the magnet; the last 1.5s blinks.
   _updatePowerUI() {
-    const g = this.magnetBadge;
-    g.clear();
-    const x = 30, y = 106, r = 13;
-    const active = this.magnetTimer > 0;
-    const blink = active && this.magnetTimer < 1500 && Math.floor(this.time.now / 130) % 2 === 0;
-    g.fillStyle(0x130018, active ? 0.85 : 0.4);
-    g.fillCircle(x, y, r + 3);
-    if (active && !blink) {
-      const frac = this.magnetTimer / MAGNET_DURATION;
-      g.lineStyle(3, 0xce93d8, 0.95);
-      g.beginPath();
-      g.arc(x, y, r + 1, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
-      g.strokePath();
-    }
-    const a = active && !blink ? 1 : 0.35;
-    g.lineStyle(4, 0xba68c8, a);
-    g.beginPath();
-    g.arc(x, y - 2, 5, Math.PI, 0, false);
-    g.strokePath();
-    g.fillStyle(0xba68c8, a);
-    g.fillRect(x - 7, y - 2, 4, 6);
-    g.fillRect(x + 3, y - 2, 4, 6);
-    g.fillStyle(0xffffff, a * 0.9);
-    g.fillRect(x - 7, y + 2, 4, 3);
-    g.fillRect(x + 3, y + 2, 4, 3);
+    UI.setMagnet(this.magnetTimer > 0 ? this.magnetTimer / MAGNET_DURATION : 0);
   }
 
   _updateShieldUI() {
-    const g = this.shieldBadge;
-    g.clear();
-    const x = W - 30, y = 106, r = 13;
-    const active = this.shieldCharges > 0;
-    g.fillStyle(0x00121f, active ? 0.85 : 0.4);
-    g.fillCircle(x, y, r + 3);
-    if (active) {
-      g.lineStyle(2, 0x81d4fa, 0.9);
-      g.strokeCircle(x, y, r + 1);
-    }
-    const a = active ? 1 : 0.35;
-    g.fillStyle(0x4fc3f7, a);
-    g.fillPoints([
-      { x: x - 6, y: y - 6 }, { x: x + 6, y: y - 6 },
-      { x: x + 6, y: y + 1 }, { x: x, y: y + 7 }, { x: x - 6, y: y + 1 },
-    ], true);
-    g.fillStyle(0xffffff, a * 0.5);
-    g.fillRect(x - 4, y - 4, 3, 3);
+    UI.setShield(this.shieldCharges > 0);
   }
 
   _consumeShield(label) {
@@ -1428,21 +1342,21 @@ export class GameScene extends Phaser.Scene {
     this._updateShieldUI();
     this.rideTimer = 0;
     this.jumpVel = Math.max(this.jumpVel, 120);
-    this._toast(label, W / 2, 118);
+    this._toast(label, W / 2, 162);
     const flash = this.add.rectangle(W / 2, H / 2, W, H, 0x4fc3f7, 0.24).setDepth(24);
     this.time.delayedCall(140, () => flash.destroy());
     audio.shieldBreak();
     vibrate(60);
     if (!this.rhythmMode) {
       this.chaseT = 1; // the shadow beast closes in until the player recovers
-      this._toast('It\'s right behind you!', W / 2, 150);
+      this._toast('It\'s right behind you!', W / 2, 190);
     }
     return true;
   }
 
   _addScore(points, label) {
     this.score += points;
-    if (label) this._toast(label, W / 2, 92);
+    if (label) this._toast(label, W / 2, 142);
   }
 
   _toast(label, x, y) {
@@ -1558,42 +1472,43 @@ export class GameScene extends Phaser.Scene {
     if (this.coinCount > oldCoins) saveNumber(keys.coins, this.coinCount);
     addToWallet(this.coinCount); // run coins go into the shop wallet
 
-    // Crash impact: shake + flash first, the panel lands after a short beat
+    // Crash impact: shake + flash first, the sheet slides up after a short beat
     this.cameras.main.shake(280, 0.014);
     const flash = this.add.rectangle(W / 2, H / 2, W, H, 0xff0000, 0.3).setDepth(25);
     this.time.delayedCall(200, () => flash.destroy());
 
-    this.time.delayedCall(320, () => {
-      this.cameras.main.setRotation(0);
-      this.add.rectangle(W / 2, H / 2, 348, 326, 0x000000, 0.9).setDepth(25);
-      this.add.text(W / 2, H / 2 - 122, 'GAME OVER', { fontSize: '40px', fontFamily: 'Arial Black, Arial', fill: '#ff6b6b', stroke: '#000', strokeThickness: 5 }).setOrigin(0.5).setDepth(26);
-      this.add.text(W / 2, H / 2 - 76, reason, { fontSize: '16px', fontFamily: 'Arial', fill: '#cfd8dc' }).setOrigin(0.5).setDepth(26);
-      this.add.text(W / 2, H / 2 - 30, `Score: ${finalScore}${newBest ? '  NEW BEST!' : ''}`, { fontSize: '24px', fontFamily: 'Arial', fill: newBest ? '#b7ffb7' : '#fff' }).setOrigin(0.5).setDepth(26);
-      this.add.text(W / 2, H / 2 + 5, `Coins: ${this.coinCount}`, { fontSize: '21px', fontFamily: 'Arial', fill: '#ffd700' }).setOrigin(0.5).setDepth(26);
-      this.add.text(W / 2, H / 2 + 34, bestSummary(this.rhythmMode), { fontSize: '15px', fontFamily: 'Arial', fill: '#9ecbff' }).setOrigin(0.5).setDepth(26);
-      if (this.rhythmMode) {
-        const st = this.rhythmStats;
-        const total = st.perfect + st.good + st.off + st.miss;
-        const ratio = total ? st.perfect / total : 0;
-        const grade = ratio >= 0.8 ? 'S' : ratio >= 0.6 ? 'A' : ratio >= 0.4 ? 'B' : 'C';
-        this.add.text(W / 2, H / 2 + 60, `Perfect ${st.perfect} · Good ${st.good} · Miss ${st.miss}   GRADE: ${grade}`, {
-          fontSize: '13px', fontFamily: 'Arial Black, Arial', fill: '#fff176',
-        }).setOrigin(0.5).setDepth(26);
-      }
-
-      const restartBtn = this.add.rectangle(W / 2, H / 2 + 96, 200, 50, 0xff6b6b).setInteractive({ useHandCursor: true }).setDepth(26);
-      const menuBtn = this.add.rectangle(W / 2, H / 2 + 154, 200, 38, 0x455a64).setInteractive({ useHandCursor: true }).setDepth(26);
-      this.add.text(W / 2, H / 2 + 96, 'PLAY AGAIN', { fontSize: '21px', fontFamily: 'Arial Black, Arial', fill: '#fff' }).setOrigin(0.5).setDepth(27);
-      this.add.text(W / 2, H / 2 + 154, 'MAIN MENU', { fontSize: '16px', fontFamily: 'Arial Black, Arial', fill: '#fff' }).setOrigin(0.5).setDepth(27);
-      restartBtn.on('pointerdown', () => { unlockAudio(); restart(); });
-      menuBtn.on('pointerdown', () => { unlockAudio(); audio.stop(); this.scene.start('Boot'); });
-    });
-
     const restart = () => {
+      UI.hideGameOver();
       if (this.rhythmMode) audio.playRhythm(this.rhythmTrack);
       else audio.playGame();
       this.scene.restart({ rhythmMode: this.rhythmMode, rhythmTrack: this.rhythmTrack });
     };
+
+    this.time.delayedCall(320, () => {
+      this.cameras.main.setRotation(0);
+      const st = this.rhythmStats;
+      const total = st.perfect + st.good + st.off + st.miss;
+      const ratio = total ? st.perfect / total : 0;
+      UI.showGameOver({
+        score: finalScore,
+        newBest,
+        coins: this.coinCount,
+        bestScore: Math.max(oldBest, finalScore),
+        wallet: getWallet(),
+        reason,
+        rhythm: this.rhythmMode
+          ? { ...st, grade: ratio >= 0.8 ? 'S' : ratio >= 0.6 ? 'A' : ratio >= 0.4 ? 'B' : 'C' }
+          : null,
+        onRestart: restart,
+        onMenu: () => {
+          audio.stop();
+          UI.hideGameOver();
+          UI.hideHUD();
+          this.scene.start('Boot');
+        },
+      });
+    });
+
     this.time.delayedCall(350, () => {
       this.input.keyboard.once('keydown-SPACE', () => { unlockAudio(); restart(); });
       this.input.keyboard.once('keydown-ENTER', () => { unlockAudio(); restart(); });
@@ -1627,10 +1542,11 @@ export class GameScene extends Phaser.Scene {
     this.speed = Math.min(MAX_SPEED + this.worldIdx * 60, BASE_SPEED + this.runTime * 0.0035);
     this.level = 1 + Math.floor(this.distance / 4500);
     this.score += SCORE_PER_SECOND * dt * (1 + Math.min(0.5, (this.combo - 1) * 0.08));
-    this.scoreTxt.setText(String(Math.floor(this.score)));
-    this.comboTxt.setText(`x${this.combo.toFixed(1)}`);
-    if (this.rhythmMode && this.beatTxt) this.beatTxt.setText(`${this.rhythmBpm} BPM  •  BEAT ${Math.max(1, Math.floor(this.musicTime / this.beatMs) + 1)}`);
-    this.modeTxt.setText(this.rhythmMode ? 'RHYTHM RUN' : `LEVEL ${this.level}`);
+    UI.setScore(this.score);
+    UI.setCombo(this.combo);
+    UI.setMode(this.rhythmMode
+      ? `🎧 ${this.rhythmBpm} BPM · BEAT ${Math.max(1, Math.floor(this.musicTime / this.beatMs) + 1)}`
+      : `LEVEL ${this.level}`);
     if (this.magnetTimer > 0) {
       this.magnetTimer = Math.max(0, this.magnetTimer - delta);
       this._updatePowerUI();
@@ -1652,7 +1568,7 @@ export class GameScene extends Phaser.Scene {
     this._redrawTrack();
     this._redrawHitLine();
     if (this.lightPulse) this.lightPulse.setAlpha((this.beatPulse || 0) * 0.045 + this.collectPulse * 0.035);
-    if (this.bdG) this.bdG.x = -this.trackTurn * 0.5;
+    if (this.bdG) { this.bdG.x = -this.trackTurn * 0.5; this.bdG.y = this.hill * 0.55; }
     if (this.beatHalo) this.beatHalo.setPosition(this.pX, PLAYER_ANCHOR_Y - 40);
 
     if (Phaser.Input.Keyboard.JustDown(this.cursors.up) || Phaser.Input.Keyboard.JustDown(this.wKey) || Phaser.Input.Keyboard.JustDown(this.spaceKey)) this._jump();
