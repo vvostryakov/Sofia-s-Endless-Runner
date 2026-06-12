@@ -35,6 +35,12 @@
   touch-action: manipulation;
 }
 
+/* Inline SVG icons (see ICONS in src/ui.js) */
+.ic { display: inline-flex; width: 1.05em; height: 1.05em; vertical-align: -0.16em; flex: none; }
+.ic svg { width: 100%; height: 100%; display: block; }
+.chip .ic { width: 13px; height: 13px; }
+.chip span { display: inline-flex; align-items: center; gap: 5px; }
+
 #ui-menu, #ui-hud, #ui-modal { position: absolute; inset: 0; }
 #ui-menu { display: none; }
 #ui-menu.on { display: block; pointer-events: auto; }
@@ -92,6 +98,7 @@
 .chip.gold b { color: var(--gold); }
 
 .btn-play {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px;
   width: 250px; padding: 17px 0; border-radius: 999px;
   font-size: 21px; font-weight: 900; letter-spacing: 3px; color: #04141c;
   background: linear-gradient(135deg, var(--acc), #7df0ff 55%, var(--acc));
@@ -117,7 +124,7 @@
   transition: transform 0.12s ease, border-color 0.12s ease;
 }
 .btn-tile:active { transform: scale(0.94); border-color: var(--acc); }
-.btn-tile i { font-style: normal; font-size: 21px; }
+.btn-tile .ic { width: 22px; height: 22px; color: var(--acc); }
 
 .menu-foot { margin-top: auto; font-size: 10px; color: rgba(147, 169, 200, 0.55); }
 
@@ -159,7 +166,12 @@
 .track-best { font-size: 11px; font-weight: 700; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
 
 /* shop */
-.shop-wallet { text-align: center; font-size: 15px; font-weight: 900; color: var(--gold); margin-bottom: 12px; }
+.shop-wallet {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  font-size: 15px; font-weight: 900; color: var(--gold); margin-bottom: 12px;
+}
+.shop-wallet .ic { width: 16px; height: 16px; }
+.fit-btn .ic { width: 12px; height: 12px; vertical-align: -0.12em; }
 .fit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .fit-card {
   display: flex; flex-direction: column; align-items: center; gap: 7px;
@@ -187,6 +199,7 @@
 @keyframes shake { 25% { transform: translateX(-4px); } 50% { transform: translateX(4px); } 75% { transform: translateX(-3px); } }
 
 /* settings */
+.set-row .ic { width: 17px; height: 17px; margin-right: 3px; color: var(--acc); }
 .set-row {
   display: flex; align-items: center; gap: 12px;
   padding: 13px 4px; border-bottom: 1px solid var(--line);
@@ -253,11 +266,14 @@
   border-radius: 999px; padding: 7px 12px; font-size: 13px;
 }
 .hud-coins b { font-weight: 900; color: var(--gold); font-variant-numeric: tabular-nums; }
+.hud-coins .ic { width: 15px; height: 15px; }
 #h-pause {
+  display: flex; align-items: center; justify-content: center;
   width: 42px; height: 42px; border-radius: 15px;
   background: var(--glass); border: 1px solid var(--line);
   color: var(--ink); font-size: 13px; font-weight: 900;
 }
+#h-pause .ic { width: 16px; height: 16px; }
 #h-pause:active { transform: scale(0.92); }
 
 .hud-sub {
@@ -289,6 +305,9 @@
 }
 .pow.off { opacity: 0; transform: scale(0.6); }
 .pow i { position: absolute; inset: -4px; border-radius: 50%; }
+.pow .ic { width: 18px; height: 18px; }
+.i-mag { color: #dcaaf0; }
+.i-shield { color: #9fdcff; }
 
 .hud-world {
   position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
@@ -316,10 +335,12 @@
 .modal-card h2 { margin: 0 0 8px; font-size: 26px; font-weight: 900; font-style: italic; letter-spacing: 3px; }
 
 .btn-ghost {
+  display: inline-flex; align-items: center; justify-content: center; gap: 9px;
   width: 220px; padding: 12px 0; border-radius: 999px;
   background: rgba(255, 255, 255, 0.07); border: 1px solid var(--line);
   color: var(--ink); font-size: 14px; font-weight: 800; letter-spacing: 1px;
 }
+.btn-ghost .ic { width: 15px; height: 15px; color: var(--ink-dim); }
 .btn-ghost:active { transform: scale(0.95); }
 
 .sheet {

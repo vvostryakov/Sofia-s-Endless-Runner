@@ -1,7 +1,7 @@
 import {
   W, H, DPR,
   JUMP_INIT, GRAVITY, WAGON_TOP, WAGON_LENGTH, WAGON_LANDING_GRACE,
-  WAGON_RIDE_MIN_MS, WAGON_RIDE_MAX_MS, BASE_SPEED, MAX_SPEED, TOUCH_THRESHOLD,
+  BASE_SPEED, MAX_SPEED, TOUCH_THRESHOLD,
   SCORE_PER_SECOND, COIN_SCORE, SHIELD_SCORE, MAGNET_SCORE, SLIDE_DURATION,
   MAGNET_DURATION, DOUBLE_JUMP_INIT, SAFE_START_MS,
   RHYTHM_APPROACH_BEATS, RHYTHM_BEAT_WINDOW_MS, RHYTHM_LANES,
@@ -10,7 +10,7 @@ import {
 } from '../constants.js';
 import {
   setupHiDPI, NEAR_Y, HORIZON_Y, SPAWN_Z, TRACK_NEAR_HW,
-  COLLECTION_RADIUS, PLAYER_ANCHOR_Y, PLAYER_DRAW_SCALE, PLAYER_VISUAL_LIFT,
+  COLLECTION_RADIUS, PLAYER_ANCHOR_Y, PLAYER_DRAW_SCALE,
   TIE_SPACING, zT, zY, zSc, zTopY, tY, centerX, fogAt, cam3,
 } from '../projection.js';
 import {
@@ -19,6 +19,7 @@ import {
 } from '../worlds.js';
 import { audio, unlockAudio, RHYTHM_TRACK_INFO } from '../audio.js';
 import { equippedOutfit, addToWallet, getWallet } from '../cosmetics.js';
+import { drawRunner } from '../runner.js';
 import * as UI from '../ui.js';
 
 // ─── Game scene ───────────────────────────────────────────────────────────────
@@ -90,7 +91,7 @@ export class GameScene extends Phaser.Scene {
     this.pX = this._laneXZ(1, 0);
     this.jumpH = 0;
     this.jumpVel = 0;
-    this.rideTimer = 0;
+    this.riding = false;
 
     this.gameObjs = [];
     this._pools = { gfx: [], circle: [], ellipse: [], rect: [] };
@@ -468,36 +469,24 @@ export class GameScene extends Phaser.Scene {
 
   _buildPlayer() {
     const d = 7;
-    const pal = equippedOutfit().palette;
+    this.pal = equippedOutfit().palette;
     this.shadow = this.add.ellipse(this._laneXZ(1, 0), NEAR_Y + 4, 48, 16, 0x000000).setAlpha(0.5).setDepth(d - 1);
     this.vis = {
       aura: this.add.ellipse(0, 0, 58, 82, 0xffa726, 0).setDepth(d - 0.45),
-      collectTrail: this.add.ellipse(0, 0, 86, 20, pal.trail, 0.08).setDepth(d - 0.6),
-      armL: this.add.rectangle(0, 0, 9, 24, pal.arms).setDepth(d - 0.2),
-      armR: this.add.rectangle(0, 0, 9, 24, pal.arms).setDepth(d - 0.2),
-      legL: this.add.rectangle(0, 0, 13, 26, pal.legs).setDepth(d),
-      legR: this.add.rectangle(0, 0, 13, 26, pal.legs).setDepth(d),
-      body: this.add.rectangle(0, 0, 34, 36, pal.body).setDepth(d + 0.1),
-      backStripe: this.add.rectangle(0, 0, 5, 28, pal.stripe).setDepth(d + 0.2),
-      head: this.add.circle(0, 0, 13, 0xffcc99).setDepth(d + 0.15),
-      hair: this.add.circle(0, 0, 15.5, pal.hair).setDepth(d + 0.3),
-      hairShine: this.add.ellipse(0, 0, 16, 8, pal.hairShine).setDepth(d + 0.34),
-      headphoneL: this.add.ellipse(0, 0, 5, 9, 0x1c262b).setDepth(d + 0.45),
-      headphoneR: this.add.ellipse(0, 0, 5, 9, 0x1c262b).setDepth(d + 0.45),
-      headphoneBand: this.add.rectangle(0, 0, 28, 3.5, 0x1c262b).setDepth(d + 0.44),
-      ponytail: this.add.ellipse(0, 0, 9, 24, pal.ponytail).setDepth(d + 0.36),
-      bow: this.add.triangle(0, 0, -7, -4, -7, 4, 7, 0, pal.bow).setDepth(d + 0.5),
+      collectTrail: this.add.ellipse(0, 0, 86, 20, this.pal.trail, 0.08).setDepth(d - 0.6),
+      bodyGlow: this.add.ellipse(0, 0, 56, 78, 0xfff176, 0.05).setDepth(d - 0.05),
       shield: this.add.ellipse(0, 0, 68, 88, 0x4fc3f7, 0.16).setStrokeStyle(3, 0x81d4fa, 0.92).setDepth(d + 1).setVisible(false),
       collectGlow: this.add.circle(0, 0, COLLECTION_RADIUS, 0xfff176, 0.08).setStrokeStyle(3, 0xfff176, 0.5).setDepth(d + 0.9).setVisible(this.rhythmMode),
-      bodyGlow: this.add.ellipse(0, 0, 56, 78, 0xfff176, 0.05).setDepth(d + 0.05),
       magnet: this.add.circle(0, 0, 42, 0xba68c8, 0.12).setStrokeStyle(3, 0xf3e5f5, 0.8).setDepth(d + 1).setVisible(false),
     };
+    // The whole figure is one Graphics pass per frame (see src/runner.js)
+    this.playerG = this.add.graphics().setDepth(d);
   }
 
   _syncPlayer(t) {
     const x = this.pX;
     const comboEnergy = Phaser.Math.Clamp((this.combo - 1) / 4, 0, 1);
-    const grounded = this.jumpH < 2;
+    const grounded = this.jumpH < 2 || this.riding; // roof counts: she runs along it
     const sliding = this.slideTimer > 0 && grounded;
 
     // Run cycle speeds up with the game; bob only while grounded
@@ -516,14 +505,14 @@ export class GameScene extends Phaser.Scene {
 
     // Lean into lane changes; tilt with vertical velocity in the air
     const laneLean = Phaser.Math.Clamp((this._laneXZ(this.pLane, 0) - this.pX) * 0.0042, -0.2, 0.2);
-    const tilt = (grounded ? 0 : Phaser.Math.Clamp(-this.jumpVel / 3000, -0.18, 0.18)) + laneLean + flipRot;
+    const tilt = (grounded ? 0 : Phaser.Math.Clamp(-this.jumpVel / 3000, -0.18, 0.18)) + laneLean;
 
-    const sy = PLAYER_ANCHOR_Y - PLAYER_VISUAL_LIFT - this.jumpH - this.playerBounce * 11 - bob;
+    const feetY = PLAYER_ANCHOR_Y + 2 - this.jumpH - this.playerBounce * 9 - bob;
     // fieldY: the collection zone hovers just in front of the runner (toward horizon)
     const fieldY = PLAYER_ANCHOR_Y - 40 - this.jumpH * 0.18;
     const sFrac = Math.max(0.35, 1 - this.jumpH / 130);
     const ps = PLAYER_DRAW_SCALE * (1 + this.playerBounce * 0.035);
-    const pos = (offset) => offset * ps;
+    const bodyCY = feetY - 42 * ps;
     const shieldScale = ps * (1 + (this.shieldCharges > 0 ? Math.sin(t / 140) * 0.06 : 0));
     const fieldScale = 1 + (this.beatPulse || 0) * 0.08 + this.collectPulse * 0.22 + comboEnergy * 0.06;
     const stepPulse = grounded && !sliding ? (0.5 + Math.abs(Math.sin(runPhase)) * 0.5) : 0;
@@ -536,7 +525,7 @@ export class GameScene extends Phaser.Scene {
     // High-combo speed aura in the world accent colour
     const auraAlpha = Math.max(0, comboEnergy - 0.5) * (0.42 + Math.sin(t / 85) * 0.12);
     this.vis.aura
-      .setPosition(x, sy + pos(6))
+      .setPosition(x, bodyCY + 6 * ps)
       .setScale(ps * (1.05 + comboEnergy * 0.3 + this.collectPulse * 0.2))
       .setFillStyle(WORLDS[this.worldIdx].accent, auraAlpha);
     this.vis.collectTrail
@@ -548,46 +537,28 @@ export class GameScene extends Phaser.Scene {
       .setScale(fieldScale)
       .setAlpha(0.08 + (this.beatPulse || 0) * 0.07 + this.collectPulse * 0.18 + comboEnergy * 0.08);
     this.vis.bodyGlow
-      .setPosition(x, sy + pos(3))
+      .setPosition(x, bodyCY + 3 * ps)
       .setScale(ps * (1 + comboEnergy * 0.16 + this.collectPulse * 0.15))
       .setAlpha(0.03 + comboEnergy * 0.1 + this.collectPulse * 0.1);
-    this.vis.shield.setPosition(x, sy + pos(2)).setScale(shieldScale).setVisible(this.shieldCharges > 0);
+    this.vis.shield.setPosition(x, bodyCY + 2 * ps).setScale(shieldScale).setVisible(this.shieldCharges > 0);
     this.vis.magnet.setPosition(x, fieldY).setScale(ps * (1 + Math.sin(t / 110) * 0.08)).setVisible(this.magnetTimer > 0);
     // Shadow sits on the ground plane just below the player's feet
     this.shadow.setPosition(x, PLAYER_ANCHOR_Y + 4).setScale(sFrac * ps * 1.3, sFrac * ps * 0.5).setAlpha(sFrac * 0.55);
 
-    // ── Body (back-facing) ──
-    const legLift = tuck * 9;
-    this.vis.legL.setPosition(x - pos(sliding ? 17 : 9), sy + pos((sliding ? 28 : 33) - legLift))
-      .setScale(ps * (sliding ? 1.55 : 1) * sqX, ps * (sliding ? 0.52 : (1 + swing * 0.45) * (1 - tuck * 0.45)) * sqY)
-      .setRotation(sliding ? 0.35 : tuck * 0.5 + laneLean);
-    this.vis.legR.setPosition(x + pos(sliding ? 15 : 9), sy + pos((sliding ? 31 : 33) - legLift))
-      .setScale(ps * (sliding ? 1.55 : 1) * sqX, ps * (sliding ? 0.52 : (1 - swing * 0.45) * (1 - tuck * 0.45)) * sqY)
-      .setRotation(sliding ? 0.35 : -tuck * 0.5 + laneLean);
-    this.vis.body.setPosition(x, sy + pos(sliding ? 17 : 7)).setScale(ps * sqX, ps * (sliding ? 0.62 : 1) * sqY).setRotation(sliding ? Math.PI / 2 : tilt + swing * 0.04);
-    this.vis.backStripe.setPosition(x, sy + pos(sliding ? 17 : 7)).setScale(ps * sqX, ps * (sliding ? 0.62 : 1) * sqY).setRotation(sliding ? Math.PI / 2 : tilt + swing * 0.04);
-    this.vis.armL.setPosition(x - pos(sliding ? 18 : 20), sy + pos(sliding ? 19 : 9 - tuck * 6)).setScale(ps).setRotation(sliding ? 1.15 : swing * 0.42 - tuck * 0.7 + laneLean);
-    this.vis.armR.setPosition(x + pos(sliding ? 18 : 20), sy + pos(sliding ? 19 : 9 - tuck * 6)).setScale(ps).setRotation(sliding ? 1.15 : -swing * 0.42 + tuck * 0.7 + laneLean);
-
-    // ── Head — back-facing view ──
-    // The character runs away from the camera: hair circle covers the skull,
-    // headphone cups peek out at the sides, and the ponytail swings below.
-    const headX = x + pos(sliding ? 31 : 0);
-    const headY = sy + pos(sliding ? 11 : -22);
-    const headRot = sliding ? Math.PI / 2 : tilt;
-    const tailSwing = grounded && !sliding ? Math.sin(t / 164) * 3.5 : 0;
-
-    // From behind only hair is visible; the skin circle is just a neck hint
-    this.vis.head.setPosition(headX, headY + pos(6)).setScale(ps).setRotation(headRot);
-    this.vis.hair.setPosition(headX, headY).setScale(ps).setRotation(headRot);
-    this.vis.hairShine.setPosition(headX - pos(3), headY - pos(7)).setScale(ps).setRotation(headRot - 0.35);
-    this.vis.headphoneL.setPosition(headX - pos(sliding ? 0 : 15), headY + pos(sliding ? -15 : 1)).setScale(ps).setRotation(headRot);
-    this.vis.headphoneR.setPosition(headX + pos(sliding ? 0 : 15), headY + pos(sliding ? 15 : 1)).setScale(ps).setRotation(headRot);
-    this.vis.headphoneBand.setPosition(headX, headY - pos(sliding ? 0 : 14)).setScale(ps).setRotation(headRot);
-    // High side ponytail: swings with the run cycle and whips on lane changes
-    const whip = laneLean * -42;
-    this.vis.ponytail.setPosition(headX + pos(sliding ? -20 : 11 + tailSwing + whip), headY + pos(sliding ? -11 : 4)).setScale(ps).setRotation(headRot + (sliding ? -0.5 : 0.42 + tailSwing * 0.06 + whip * 0.02));
-    this.vis.bow.setPosition(headX + pos(sliding ? -14 : 9), headY + pos(sliding ? -9 : -9)).setScale(ps).setRotation(sliding ? Math.PI * 0.75 : -Math.PI / 4);
+    // ── Figure: one Graphics pass driven by the pose (src/runner.js) ──
+    drawRunner(this.playerG, {
+      x,
+      feetY,
+      s: ps,
+      rot: tilt + flipRot + (grounded && !sliding ? swing * 0.04 : 0),
+      sqX,
+      sqY,
+      sliding,
+      swing,
+      tuck,
+      lean: laneLean,
+      tailSway: Math.sin(t / 164),
+    }, this.pal);
   }
 
   _buildControls() {
@@ -632,9 +603,9 @@ export class GameScene extends Phaser.Scene {
 
   _jump() {
     if (!this.alive || this.pausedRun || this.slideTimer > 0) return;
-    const grounded = this.jumpH < 2 || this.rideTimer > 0;
+    const grounded = this.jumpH < 2 || this.riding;
     if (grounded || this.jumpsUsed < 2) {
-      this.rideTimer = 0;
+      this.riding = false;
       this.jumpVel = grounded ? JUMP_INIT : DOUBLE_JUMP_INIT;
       if (!grounded) this.flipT = 1; // front-flip on the double jump
       this.jumpsUsed = grounded ? 1 : this.jumpsUsed + 1;
@@ -802,6 +773,16 @@ export class GameScene extends Phaser.Scene {
     const pick = pool.find(p => (roll -= p.w) <= 0) || pool[0];
     pick.fn(difficulty);
     this._scheduleNextSpawn(pick.extraGap || 0);
+  }
+
+  // The wagon (if any) currently under the player's feet — same lane, roof
+  // span overlapping the player plane. The front edge shares the landing grace.
+  _wagonUnder() {
+    for (const o of this.gameObjs) {
+      if (o.type === 'wagon' && o.lane === this.pLane &&
+          o.z <= WAGON_LANDING_GRACE && o.z + o.worldL >= -12) return o;
+    }
+    return null;
   }
 
   _blockedLanesNear(z, range = 650) {
@@ -1069,6 +1050,67 @@ export class GameScene extends Phaser.Scene {
     g.fillEllipse(x, y + 2, w, w * 0.26);
   }
 
+  // World-skinned static obstacles: mossy log / sandstone boulder / coral
+  // block / void crystal. Hitboxes are untouched — only the dressing changes.
+  _drawThemedObstacle(g, obj, z, sc) {
+    const wld = WORLDS[this.worldIdx];
+    const D = obj.worldD || 32;
+    const box = (base, top, side) =>
+      this._drawBox(g, obj.lane, z, obj.worldW, obj.worldH, D, base, { topColor: top, sideColor: side });
+
+    if (wld.id === 'jungle') {
+      const f = box(0x5d3f24, 0x4e8f4a, 0x432e1a);
+      g.lineStyle(Math.max(1, 1.6 * sc), 0x3a2614, 0.55);
+      for (const fr of [0.35, 0.68]) {
+        g.beginPath();
+        g.moveTo(f.xF - f.hwF, f.tF + (f.bF - f.tF) * fr);
+        g.lineTo(f.xF + f.hwF, f.tF + (f.bF - f.tF) * fr);
+        g.strokePath();
+      }
+      g.fillStyle(0x5ed06a, 0.95);
+      g.fillCircle(f.xF - f.hwF * 0.55, f.tF, 4.5 * sc);
+      g.fillCircle(f.xF - f.hwF * 0.18, f.tF - 3 * sc, 3.5 * sc);
+      g.fillCircle(f.xF + f.hwF * 0.45, f.tF - 1 * sc, 3 * sc);
+    } else if (wld.id === 'savanna') {
+      const f = box(0xb08a4f, 0xd2a96a, 0x8a683a);
+      g.lineStyle(Math.max(1, 1.5 * sc), 0x6e5430, 0.65);
+      g.beginPath();
+      g.moveTo(f.xF - f.hwF * 0.5, f.tF);
+      g.lineTo(f.xF - f.hwF * 0.12, f.tF + (f.bF - f.tF) * 0.45);
+      g.lineTo(f.xF - f.hwF * 0.4, f.bF);
+      g.strokePath();
+      g.fillStyle(0x8a683a, 1);
+      g.fillEllipse(f.xF + f.hwF * 0.9, f.bF, 9 * sc, 5 * sc);
+      g.fillEllipse(f.xF - f.hwF * 1.08, f.bF, 7 * sc, 4 * sc);
+    } else if (wld.id === 'reef') {
+      const f = box(0xd95590, 0xff8fc0, 0x9e3766);
+      g.fillStyle(0xff8fc0, 0.6);
+      g.fillCircle(f.xF - f.hwF * 0.45, f.tF + (f.bF - f.tF) * 0.3, 2.6 * sc);
+      g.fillCircle(f.xF + f.hwF * 0.3, f.tF + (f.bF - f.tF) * 0.58, 2 * sc);
+      g.fillCircle(f.xF - f.hwF * 0.08, f.tF + (f.bF - f.tF) * 0.78, 1.8 * sc);
+      g.lineStyle(1.2, 0xbfefff, 0.65);
+      g.strokeCircle(f.xF + f.hwF * 0.5, f.tF - 8 * sc, 3 * sc);
+      g.strokeCircle(f.xF + f.hwF * 0.28, f.tF - 15 * sc, 2 * sc);
+    } else {
+      const f = box(0x2c2060, 0x4a3a96, 0x1e1546);
+      g.fillStyle(0x6a55c2, 0.55);
+      g.fillTriangle(
+        f.xF - f.hwF * 0.5, f.bF,
+        f.xF, f.tF + (f.bF - f.tF) * 0.25,
+        f.xF + f.hwF * 0.5, f.bF
+      );
+      g.lineStyle(Math.max(1, 1.8 * sc), wld.accent, 0.5);
+      g.beginPath();
+      g.moveTo(f.xF - f.hwF, f.bF);
+      g.lineTo(f.xF - f.hwF, f.tF);
+      g.lineTo(f.xF + f.hwF, f.tF);
+      g.lineTo(f.xF + f.hwF, f.bF);
+      g.strokePath();
+      g.fillStyle(wld.accent, 0.5);
+      g.fillCircle(f.xF, f.tF, 2.5 * sc);
+    }
+  }
+
   _renderObj(obj) {
     const z = obj.z;
     const sy = zY(z);
@@ -1087,13 +1129,18 @@ export class GameScene extends Phaser.Scene {
       const g = obj.gfx;
       g.clear();
       this._drawGroundShadow(g, x, sy, obj.worldW * sc * 1.5);
-      const f = this._drawBox(g, obj.lane, z, obj.worldW, obj.worldH, obj.worldD || 32, obj.color);
-      // Plank detail on the front face
-      g.lineStyle(Math.max(1, 1.5 * sc), 0x000000, 0.14);
-      g.beginPath();
-      g.moveTo(f.xF - f.hwF, f.tF + (f.bF - f.tF) * 0.5);
-      g.lineTo(f.xF + f.hwF, f.tF + (f.bF - f.tF) * 0.5);
-      g.strokePath();
+      // Drifting and rhythm crates keep their signal colours; everything else
+      // wears the current world's skin (same hitbox, themed dressing).
+      if (obj.drift || obj.rhythmTimed) {
+        const f = this._drawBox(g, obj.lane, z, obj.worldW, obj.worldH, obj.worldD || 32, obj.color);
+        g.lineStyle(Math.max(1, 1.5 * sc), 0x000000, 0.14);
+        g.beginPath();
+        g.moveTo(f.xF - f.hwF, f.tF + (f.bF - f.tF) * 0.5);
+        g.lineTo(f.xF + f.hwF, f.tF + (f.bF - f.tF) * 0.5);
+        g.strokePath();
+      } else {
+        this._drawThemedObstacle(g, obj, z, sc);
+      }
       g.setDepth(dp);
     }
 
@@ -1102,9 +1149,10 @@ export class GameScene extends Phaser.Scene {
       g.clear();
       const sw = obj.worldW;
       this._drawGroundShadow(g, x, sy, sw * sc * 1.3, 0.2);
-      // Posts: thin 3D boxes at the gate edges
-      this._drawBox(g, obj.lane, z, 9, obj.worldH, 14, 0x5d4037, { fracX: -sw / 2 });
-      this._drawBox(g, obj.lane, z, 9, obj.worldH, 14, 0x5d4037, { fracX: sw / 2 });
+      // Posts: thin 3D boxes at the gate edges, in the world's material
+      const postCol = { jungle: 0x5d4037, savanna: 0x8a683a, reef: 0x9e3766, deep: 0x2c2060 }[WORLDS[this.worldIdx].id];
+      this._drawBox(g, obj.lane, z, 9, obj.worldH, 14, postCol, { fracX: -sw / 2 });
+      this._drawBox(g, obj.lane, z, 9, obj.worldH, 14, postCol, { fracX: sw / 2 });
       // Glowing beam across the top — slide under it
       const pulseA = 0.5 + Math.sin(this.time.now / 90) * 0.16;
       const beam = this._drawBox(g, obj.lane, z, sw, 13, 10, 0xc62828, { base: obj.worldH - 13 });
@@ -1174,9 +1222,40 @@ export class GameScene extends Phaser.Scene {
       const w = WORLDS[this.worldIdx];
       const L = obj.worldL;
       this._drawGroundShadow(g, this._laneXZ(obj.lane, z + L * 0.4), zY(z + L * 0.4), obj.worldW * zSc(z + L * 0.4) * 1.7, 0.3);
+      // Bogie wheels along the visible side (drawn first so the body sits on
+      // them) — without these the car reads as a floating slab.
+      const dxL = this._laneXZ(obj.lane, z + L) - this._laneXZ(obj.lane, z);
+      const sgn = dxL > 2 ? 1 : dxL < -2 ? -1 : 0;
+      if (sgn) {
+        g.fillStyle(0x101010, 1);
+        for (let k = 0; k < 4; k++) {
+          const wz = z + L * (0.16 + 0.23 * k);
+          if (wz < -40 || wz > SPAWN_Z) continue;
+          const wsc = zSc(wz);
+          const wx = this._laneXZ(obj.lane, wz) + sgn * (obj.worldW / 2) * wsc * 0.92;
+          g.fillCircle(wx, zY(wz), Math.max(2, 8 * wsc));
+        }
+      }
       // Train car: one long 3D box; the roof top-face is the walkable deck
       const bodyCol = obj.carIdx % 2 === 0 ? 0x4e342e : 0x5d4037;
       const f = this._drawBox(g, obj.lane, z, obj.worldW, WAGON_TOP, L, bodyCol, { topColor: 0x6d4c41 });
+      // Window strip down the visible side
+      if (sgn) {
+        g.fillStyle(w.accent, 0.25);
+        for (let k = 0; k < 4; k++) {
+          const wz0 = z + L * (0.14 + 0.21 * k);
+          const wz1 = wz0 + L * 0.12;
+          if (wz1 < -20) continue;
+          const x0 = this._laneXZ(obj.lane, wz0) + sgn * (obj.worldW / 2) * zSc(wz0);
+          const x1 = this._laneXZ(obj.lane, wz1) + sgn * (obj.worldW / 2) * zSc(wz1);
+          g.fillPoints([
+            { x: x0, y: zTopY(wz0, WAGON_TOP * 0.74) },
+            { x: x1, y: zTopY(wz1, WAGON_TOP * 0.74) },
+            { x: x1, y: zTopY(wz1, WAGON_TOP * 0.46) },
+            { x: x0, y: zTopY(wz0, WAGON_TOP * 0.46) },
+          ], true);
+        }
+      }
       // Roof plank lines across the deck
       g.lineStyle(1, 0x3e2723, 0.55);
       for (let k = 1; k < 5; k++) {
@@ -1204,13 +1283,22 @@ export class GameScene extends Phaser.Scene {
       obj.coins.forEach(c => {
         if (c.collected) return;
         const coinZ = Phaser.Math.Linear(z + L * 0.86, z + L * 0.18, c.lengthT);
+        // Missed coins behind the player plane balloon at the camera and
+        // stack into a gold column — cull them, they're uncollectible
+        if (coinZ < -70) {
+          c.obj.setVisible(false);
+          c.shine.setVisible(false);
+          return;
+        }
         c.obj.setVisible(true);
         c.shine.setVisible(true);
 
         const coinSc = zSc(coinZ);
         const coinX = this._laneXZ(obj.lane, coinZ) + c.fracX * obj.worldW * coinSc;
         const coinTop = zTopY(coinZ, WAGON_TOP);
-        const cr = Math.max(3, 15.75 * coinSc);
+        // Clamp the near-field size: roof coins right at the camera otherwise
+        // balloon into overlapping blobs
+        const cr = Phaser.Math.Clamp(15.75 * coinSc, 3, 17);
         const cy = coinTop - cr - 4 * coinSc;
         const coinDepth = 5 + Math.min(zT(coinZ), 1) * 5;
         c.obj.setPosition(coinX, cy).setRadius(cr).setDepth(coinDepth + 1);
@@ -1273,34 +1361,25 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (obj.type === 'wagon') {
-      if (this.jumpH >= WAGON_TOP - 28 && this.jumpVel <= 0) {
+      // Land only when actually near the roof plane and falling; the ride
+      // itself is positional — update() keeps her up while a roof is under
+      // her feet, and she runs off the real end of the real car.
+      if (this.jumpH >= WAGON_TOP - 28 && this.jumpH <= WAGON_TOP + 16 && this.jumpVel <= 0) {
         obj.checked = true;
+        const firstContact = !this.riding;
+        this.riding = true;
         this.jumpH = WAGON_TOP;
         this.jumpVel = 0;
         this.jumpsUsed = 0;
-        const remainingLength = Math.max(0, obj.z + obj.worldL);
-        this.rideTimer = Phaser.Math.Clamp(
-          (remainingLength / Math.max(1, this.speed)) * 1000 + 420,
-          WAGON_RIDE_MIN_MS,
-          WAGON_RIDE_MAX_MS
-        );
-        const collected = obj.coins.filter(c => !c.collected).length;
-        obj.coins.forEach(c => {
-          if (!c.collected) {
-            c.collected = true;
-            this.coinCount++;
-            this._coinPop(c.obj.x, c.obj.y);
-            this._collectionFeedback(c.obj.x, c.obj.y, 0xffd700);
-            c.obj.setVisible(false);
-            c.shine.setVisible(false);
-          }
-        });
-        this.combo = Math.min(this.combo + 1, 5);
-        this._addScore(collected * COIN_SCORE * this.combo, `Combo x${this.combo}`);
-        UI.setCoins(this.coinCount);
-        audio.coin();
-        audio.land();
-      } else if (this.jumpH < WAGON_TOP - 8) {
+        if (firstContact) {
+          this.combo = Math.min(this.combo + 1, 5);
+          this._addScore(15, 'Roof run!');
+          this.landSquash = 1;
+          this.cam.dipVel = -150;
+          this._dustPuff(this.pX, PLAYER_ANCHOR_Y + 2 - WAGON_TOP, 4);
+          audio.land();
+        }
+      } else if (this.jumpH < WAGON_TOP - 8 && !this.riding) {
         obj.checked = true;
         if (this._consumeShield('Shield blocked it')) obj.consumed = true;
         else this._gameOver('Hit a wagon');
@@ -1340,7 +1419,7 @@ export class GameScene extends Phaser.Scene {
     if (this.shieldCharges <= 0) return false;
     this.shieldCharges = 0;
     this._updateShieldUI();
-    this.rideTimer = 0;
+    this.riding = false;
     this.jumpVel = Math.max(this.jumpVel, 120);
     this._toast(label, W / 2, 162);
     const flash = this.add.rectangle(W / 2, H / 2, W, H, 0x4fc3f7, 0.24).setDepth(24);
@@ -1545,7 +1624,7 @@ export class GameScene extends Phaser.Scene {
     UI.setScore(this.score);
     UI.setCombo(this.combo);
     UI.setMode(this.rhythmMode
-      ? `🎧 ${this.rhythmBpm} BPM · BEAT ${Math.max(1, Math.floor(this.musicTime / this.beatMs) + 1)}`
+      ? `${this.rhythmBpm} BPM · BEAT ${Math.max(1, Math.floor(this.musicTime / this.beatMs) + 1)}`
       : `LEVEL ${this.level}`);
     if (this.magnetTimer > 0) {
       this.magnetTimer = Math.max(0, this.magnetTimer - delta);
@@ -1578,16 +1657,33 @@ export class GameScene extends Phaser.Scene {
 
     this.pX += (this._laneXZ(this.pLane, 0) - this.pX) * 11 * dt;
 
-    if (this.rideTimer > 0) {
-      this.rideTimer -= delta;
-      this.jumpH = WAGON_TOP;
-      this.jumpVel = 0;
-      if (this.rideTimer <= 0) this.jumpVel = 80;
-    } else {
+    // Roof riding is positional: she stays up exactly while a wagon is under
+    // her feet, and gravity takes over the moment she runs off its real end.
+    const plat = this._wagonUnder();
+    if (this.riding) {
+      if (plat && this.jumpVel <= 0) {
+        this.jumpH = WAGON_TOP;
+        this.jumpVel = 0;
+        this.jumpsUsed = 0;
+      } else {
+        this.riding = false; // jumped off or ran past the end
+      }
+    }
+    if (!this.riding) {
       const wasAir = this.jumpH > 2;
+      const prevH = this.jumpH;
       this.jumpVel -= GRAVITY * dt;
       this.jumpH += this.jumpVel * dt;
-      if (this.jumpH <= 0) {
+      if (plat && this.jumpVel < 0 && prevH >= WAGON_TOP - 16 && this.jumpH <= WAGON_TOP) {
+        // caught a roof on the way down (re-landing after a roof jump)
+        this.riding = true;
+        this.jumpH = WAGON_TOP;
+        this.jumpVel = 0;
+        this.jumpsUsed = 0;
+        this.landSquash = 1;
+        audio.land();
+        this._consumeBufferedInput();
+      } else if (this.jumpH <= 0) {
         this.jumpH = 0; this.jumpVel = 0; this.jumpsUsed = 0;
         if (wasAir) this._onLand();
       }
@@ -1616,6 +1712,28 @@ export class GameScene extends Phaser.Scene {
         if (obj.pulling) {
           obj.pullT = Math.min(1, (obj.pullT || 0) + dt * 5.5);
           if (obj.pullT >= 1) this._collectLooseCoin(obj, 'Magnet');
+        }
+      }
+
+      // Riding a roof: its coins collect one by one as they sweep past her
+      if (obj.type === 'wagon' && this.riding && obj.lane === this.pLane) {
+        for (const c of obj.coins) {
+          if (c.collected) continue;
+          const coinZ = Phaser.Math.Linear(obj.z + obj.worldL * 0.86, obj.z + obj.worldL * 0.18, c.lengthT);
+          if (coinZ <= 30 && coinZ >= -60) {
+            c.collected = true;
+            c.obj.setVisible(false);
+            c.shine.setVisible(false);
+            this.coinCount++;
+            this.combo = Math.min(this.combo + 0.15, 5);
+            this._addScore(Math.round(COIN_SCORE * this.combo));
+            UI.setCoins(this.coinCount);
+            // Light feedback only: at roof-run cadence (~10 coins/s) the full
+            // collection ring + beam stacks into visual mush over the player
+            this._coinPop(c.obj.x, c.obj.y);
+            this.collectPulse = Math.min(1, this.collectPulse + 0.4);
+            audio.coin();
+          }
         }
       }
 
