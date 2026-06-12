@@ -50,6 +50,7 @@ Layout:
 - `src/constants.js` — tuning constants and persistent-storage helpers
 - `src/projection.js` — pseudo-3D camera (z → screen, curve bend, hills, distance fog)
 - `src/ui.js` + `ui.css` — DOM UI layer: menus, HUD, modals rendered as HTML/CSS on a 400×700 surface scaled to match the canvas
+- `src/runner.js` — the player character: one Graphics pass per frame, posed by the scene (run/air/slide), skinned by the outfit palette
 - `src/worlds.js` — world themes and scenery drawing
 - `src/audio.js` — procedural Web Audio music + SFX
 - `src/scenes/BootScene.js`, `src/scenes/GameScene.js` — menu backdrop and gameplay (chrome lives in `src/ui.js`)
