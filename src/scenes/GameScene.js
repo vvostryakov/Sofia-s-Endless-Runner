@@ -1,7 +1,7 @@
 import {
   W, H, DPR,
   JUMP_INIT, GRAVITY, WAGON_TOP, WAGON_LENGTH, WAGON_LANDING_GRACE,
-  WAGON_RIDE_MIN_MS, WAGON_RIDE_MAX_MS, BASE_SPEED, MAX_SPEED, TOUCH_THRESHOLD,
+  BASE_SPEED, MAX_SPEED, TOUCH_THRESHOLD,
   SCORE_PER_SECOND, COIN_SCORE, SHIELD_SCORE, MAGNET_SCORE, SLIDE_DURATION,
   MAGNET_DURATION, DOUBLE_JUMP_INIT, SAFE_START_MS,
   RHYTHM_APPROACH_BEATS, RHYTHM_BEAT_WINDOW_MS, RHYTHM_LANES,
@@ -91,7 +91,7 @@ export class GameScene extends Phaser.Scene {
     this.pX = this._laneXZ(1, 0);
     this.jumpH = 0;
     this.jumpVel = 0;
-    this.rideTimer = 0;
+    this.riding = false;
 
     this.gameObjs = [];
     this._pools = { gfx: [], circle: [], ellipse: [], rect: [] };
@@ -486,7 +486,7 @@ export class GameScene extends Phaser.Scene {
   _syncPlayer(t) {
     const x = this.pX;
     const comboEnergy = Phaser.Math.Clamp((this.combo - 1) / 4, 0, 1);
-    const grounded = this.jumpH < 2;
+    const grounded = this.jumpH < 2 || this.riding; // roof counts: she runs along it
     const sliding = this.slideTimer > 0 && grounded;
 
     // Run cycle speeds up with the game; bob only while grounded
@@ -603,9 +603,9 @@ export class GameScene extends Phaser.Scene {
 
   _jump() {
     if (!this.alive || this.pausedRun || this.slideTimer > 0) return;
-    const grounded = this.jumpH < 2 || this.rideTimer > 0;
+    const grounded = this.jumpH < 2 || this.riding;
     if (grounded || this.jumpsUsed < 2) {
-      this.rideTimer = 0;
+      this.riding = false;
       this.jumpVel = grounded ? JUMP_INIT : DOUBLE_JUMP_INIT;
       if (!grounded) this.flipT = 1; // front-flip on the double jump
       this.jumpsUsed = grounded ? 1 : this.jumpsUsed + 1;
@@ -773,6 +773,16 @@ export class GameScene extends Phaser.Scene {
     const pick = pool.find(p => (roll -= p.w) <= 0) || pool[0];
     pick.fn(difficulty);
     this._scheduleNextSpawn(pick.extraGap || 0);
+  }
+
+  // The wagon (if any) currently under the player's feet — same lane, roof
+  // span overlapping the player plane. The front edge shares the landing grace.
+  _wagonUnder() {
+    for (const o of this.gameObjs) {
+      if (o.type === 'wagon' && o.lane === this.pLane &&
+          o.z <= WAGON_LANDING_GRACE && o.z + o.worldL >= -12) return o;
+    }
+    return null;
   }
 
   _blockedLanesNear(z, range = 650) {
@@ -1212,9 +1222,40 @@ export class GameScene extends Phaser.Scene {
       const w = WORLDS[this.worldIdx];
       const L = obj.worldL;
       this._drawGroundShadow(g, this._laneXZ(obj.lane, z + L * 0.4), zY(z + L * 0.4), obj.worldW * zSc(z + L * 0.4) * 1.7, 0.3);
+      // Bogie wheels along the visible side (drawn first so the body sits on
+      // them) — without these the car reads as a floating slab.
+      const dxL = this._laneXZ(obj.lane, z + L) - this._laneXZ(obj.lane, z);
+      const sgn = dxL > 2 ? 1 : dxL < -2 ? -1 : 0;
+      if (sgn) {
+        g.fillStyle(0x101010, 1);
+        for (let k = 0; k < 4; k++) {
+          const wz = z + L * (0.16 + 0.23 * k);
+          if (wz < -40 || wz > SPAWN_Z) continue;
+          const wsc = zSc(wz);
+          const wx = this._laneXZ(obj.lane, wz) + sgn * (obj.worldW / 2) * wsc * 0.92;
+          g.fillCircle(wx, zY(wz), Math.max(2, 8 * wsc));
+        }
+      }
       // Train car: one long 3D box; the roof top-face is the walkable deck
       const bodyCol = obj.carIdx % 2 === 0 ? 0x4e342e : 0x5d4037;
       const f = this._drawBox(g, obj.lane, z, obj.worldW, WAGON_TOP, L, bodyCol, { topColor: 0x6d4c41 });
+      // Window strip down the visible side
+      if (sgn) {
+        g.fillStyle(w.accent, 0.25);
+        for (let k = 0; k < 4; k++) {
+          const wz0 = z + L * (0.14 + 0.21 * k);
+          const wz1 = wz0 + L * 0.12;
+          if (wz1 < -20) continue;
+          const x0 = this._laneXZ(obj.lane, wz0) + sgn * (obj.worldW / 2) * zSc(wz0);
+          const x1 = this._laneXZ(obj.lane, wz1) + sgn * (obj.worldW / 2) * zSc(wz1);
+          g.fillPoints([
+            { x: x0, y: zTopY(wz0, WAGON_TOP * 0.74) },
+            { x: x1, y: zTopY(wz1, WAGON_TOP * 0.74) },
+            { x: x1, y: zTopY(wz1, WAGON_TOP * 0.46) },
+            { x: x0, y: zTopY(wz0, WAGON_TOP * 0.46) },
+          ], true);
+        }
+      }
       // Roof plank lines across the deck
       g.lineStyle(1, 0x3e2723, 0.55);
       for (let k = 1; k < 5; k++) {
@@ -1242,13 +1283,22 @@ export class GameScene extends Phaser.Scene {
       obj.coins.forEach(c => {
         if (c.collected) return;
         const coinZ = Phaser.Math.Linear(z + L * 0.86, z + L * 0.18, c.lengthT);
+        // Missed coins behind the player plane balloon at the camera and
+        // stack into a gold column — cull them, they're uncollectible
+        if (coinZ < -70) {
+          c.obj.setVisible(false);
+          c.shine.setVisible(false);
+          return;
+        }
         c.obj.setVisible(true);
         c.shine.setVisible(true);
 
         const coinSc = zSc(coinZ);
         const coinX = this._laneXZ(obj.lane, coinZ) + c.fracX * obj.worldW * coinSc;
         const coinTop = zTopY(coinZ, WAGON_TOP);
-        const cr = Math.max(3, 15.75 * coinSc);
+        // Clamp the near-field size: roof coins right at the camera otherwise
+        // balloon into overlapping blobs
+        const cr = Phaser.Math.Clamp(15.75 * coinSc, 3, 17);
         const cy = coinTop - cr - 4 * coinSc;
         const coinDepth = 5 + Math.min(zT(coinZ), 1) * 5;
         c.obj.setPosition(coinX, cy).setRadius(cr).setDepth(coinDepth + 1);
@@ -1311,34 +1361,25 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (obj.type === 'wagon') {
-      if (this.jumpH >= WAGON_TOP - 28 && this.jumpVel <= 0) {
+      // Land only when actually near the roof plane and falling; the ride
+      // itself is positional — update() keeps her up while a roof is under
+      // her feet, and she runs off the real end of the real car.
+      if (this.jumpH >= WAGON_TOP - 28 && this.jumpH <= WAGON_TOP + 16 && this.jumpVel <= 0) {
         obj.checked = true;
+        const firstContact = !this.riding;
+        this.riding = true;
         this.jumpH = WAGON_TOP;
         this.jumpVel = 0;
         this.jumpsUsed = 0;
-        const remainingLength = Math.max(0, obj.z + obj.worldL);
-        this.rideTimer = Phaser.Math.Clamp(
-          (remainingLength / Math.max(1, this.speed)) * 1000 + 420,
-          WAGON_RIDE_MIN_MS,
-          WAGON_RIDE_MAX_MS
-        );
-        const collected = obj.coins.filter(c => !c.collected).length;
-        obj.coins.forEach(c => {
-          if (!c.collected) {
-            c.collected = true;
-            this.coinCount++;
-            this._coinPop(c.obj.x, c.obj.y);
-            this._collectionFeedback(c.obj.x, c.obj.y, 0xffd700);
-            c.obj.setVisible(false);
-            c.shine.setVisible(false);
-          }
-        });
-        this.combo = Math.min(this.combo + 1, 5);
-        this._addScore(collected * COIN_SCORE * this.combo, `Combo x${this.combo}`);
-        UI.setCoins(this.coinCount);
-        audio.coin();
-        audio.land();
-      } else if (this.jumpH < WAGON_TOP - 8) {
+        if (firstContact) {
+          this.combo = Math.min(this.combo + 1, 5);
+          this._addScore(15, 'Roof run!');
+          this.landSquash = 1;
+          this.cam.dipVel = -150;
+          this._dustPuff(this.pX, PLAYER_ANCHOR_Y + 2 - WAGON_TOP, 4);
+          audio.land();
+        }
+      } else if (this.jumpH < WAGON_TOP - 8 && !this.riding) {
         obj.checked = true;
         if (this._consumeShield('Shield blocked it')) obj.consumed = true;
         else this._gameOver('Hit a wagon');
@@ -1378,7 +1419,7 @@ export class GameScene extends Phaser.Scene {
     if (this.shieldCharges <= 0) return false;
     this.shieldCharges = 0;
     this._updateShieldUI();
-    this.rideTimer = 0;
+    this.riding = false;
     this.jumpVel = Math.max(this.jumpVel, 120);
     this._toast(label, W / 2, 162);
     const flash = this.add.rectangle(W / 2, H / 2, W, H, 0x4fc3f7, 0.24).setDepth(24);
@@ -1616,16 +1657,33 @@ export class GameScene extends Phaser.Scene {
 
     this.pX += (this._laneXZ(this.pLane, 0) - this.pX) * 11 * dt;
 
-    if (this.rideTimer > 0) {
-      this.rideTimer -= delta;
-      this.jumpH = WAGON_TOP;
-      this.jumpVel = 0;
-      if (this.rideTimer <= 0) this.jumpVel = 80;
-    } else {
+    // Roof riding is positional: she stays up exactly while a wagon is under
+    // her feet, and gravity takes over the moment she runs off its real end.
+    const plat = this._wagonUnder();
+    if (this.riding) {
+      if (plat && this.jumpVel <= 0) {
+        this.jumpH = WAGON_TOP;
+        this.jumpVel = 0;
+        this.jumpsUsed = 0;
+      } else {
+        this.riding = false; // jumped off or ran past the end
+      }
+    }
+    if (!this.riding) {
       const wasAir = this.jumpH > 2;
+      const prevH = this.jumpH;
       this.jumpVel -= GRAVITY * dt;
       this.jumpH += this.jumpVel * dt;
-      if (this.jumpH <= 0) {
+      if (plat && this.jumpVel < 0 && prevH >= WAGON_TOP - 16 && this.jumpH <= WAGON_TOP) {
+        // caught a roof on the way down (re-landing after a roof jump)
+        this.riding = true;
+        this.jumpH = WAGON_TOP;
+        this.jumpVel = 0;
+        this.jumpsUsed = 0;
+        this.landSquash = 1;
+        audio.land();
+        this._consumeBufferedInput();
+      } else if (this.jumpH <= 0) {
         this.jumpH = 0; this.jumpVel = 0; this.jumpsUsed = 0;
         if (wasAir) this._onLand();
       }
@@ -1654,6 +1712,28 @@ export class GameScene extends Phaser.Scene {
         if (obj.pulling) {
           obj.pullT = Math.min(1, (obj.pullT || 0) + dt * 5.5);
           if (obj.pullT >= 1) this._collectLooseCoin(obj, 'Magnet');
+        }
+      }
+
+      // Riding a roof: its coins collect one by one as they sweep past her
+      if (obj.type === 'wagon' && this.riding && obj.lane === this.pLane) {
+        for (const c of obj.coins) {
+          if (c.collected) continue;
+          const coinZ = Phaser.Math.Linear(obj.z + obj.worldL * 0.86, obj.z + obj.worldL * 0.18, c.lengthT);
+          if (coinZ <= 30 && coinZ >= -60) {
+            c.collected = true;
+            c.obj.setVisible(false);
+            c.shine.setVisible(false);
+            this.coinCount++;
+            this.combo = Math.min(this.combo + 0.15, 5);
+            this._addScore(Math.round(COIN_SCORE * this.combo));
+            UI.setCoins(this.coinCount);
+            // Light feedback only: at roof-run cadence (~10 coins/s) the full
+            // collection ring + beam stacks into visual mush over the player
+            this._coinPop(c.obj.x, c.obj.y);
+            this.collectPulse = Math.min(1, this.collectPulse + 0.4);
+            audio.coin();
+          }
         }
       }
 

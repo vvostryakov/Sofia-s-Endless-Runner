@@ -96,9 +96,15 @@ function uprightPose(g, p, pal) {
   g.fillStyle(shade(packC, -24), 1);
   g.fillRoundedRect(-3.5, -4, 7, 5, 2);
 
-  // Arms swing opposite the legs; tuck raises them outward in the air
-  limb(g, -14.5, -14, swing * 0.45 + tuck * 0.85, 9, 23, pal.arms, { kind: 'hand', color: SKIN });
-  limb(g, 14.5, -14, -swing * 0.45 - tuck * 0.85, 9, 23, pal.arms, { kind: 'hand', color: SKIN });
+  // Arms hang at her sides (anchored outside the jacket) and pump forward/
+  // back: from behind that reads as foreshortening — the forward arm looks
+  // shorter and its hand rises — not a sideways sweep across the back.
+  const reachL = Math.max(0, swing);
+  const reachR = Math.max(0, -swing);
+  const armLenL = 23 * (1 - 0.34 * reachL + 0.08 * reachR) * (1 - tuck * 0.15);
+  const armLenR = 23 * (1 - 0.34 * reachR + 0.08 * reachL) * (1 - tuck * 0.15);
+  limb(g, -16.5, -13, 0.12 + swing * 0.07 + tuck * 0.8, 9, armLenL, pal.arms, { kind: 'hand', color: SKIN });
+  limb(g, 16.5, -13, -0.12 + swing * 0.07 - tuck * 0.8, 9, armLenR, pal.arms, { kind: 'hand', color: SKIN });
 
   // Head: neck hint, hair dome, shine
   g.fillStyle(SKIN, 1);
