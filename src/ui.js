@@ -80,6 +80,8 @@ const wireActs = (scope, handlers) => {
   scope.querySelectorAll('[data-a]').forEach((b) =>
     b.addEventListener('click', () => {
       unlockAudio();
+      // Drop focus so the button doesn't swallow arrow/space keys mid-run.
+      b.blur();
       handlers[b.dataset.a]?.();
     }));
 };
@@ -295,7 +297,7 @@ export function showHUD({ rhythm = false, bpm = 0, onPause }) {
       <div class="pow off" id="h-shield">${ic('shield', 'i-shield')}</div>
     </div>
     <div class="hud-world" id="h-world"></div>`;
-  $('#h-pause').addEventListener('click', () => { unlockAudio(); onPause(); });
+  $('#h-pause').addEventListener('click', (e) => { unlockAudio(); e.currentTarget.blur(); onPause(); });
 }
 
 export function hideHUD() {
