@@ -5,7 +5,6 @@ import {
   SCORE_PER_SECOND, COIN_SCORE, SHIELD_SCORE, MAGNET_SCORE, SLIDE_DURATION,
   MAGNET_DURATION, DOUBLE_JUMP_INIT, SAFE_START_MS,
   RHYTHM_APPROACH_BEATS, RHYTHM_BEAT_WINDOW_MS, RHYTHM_LANES,
-  TURN_MAX_OFFSET, TURN_CHANGE_MIN_MS, TURN_CHANGE_MAX_MS,
   LANE_SIDE, saveNumber, loadNumber, bestKeys, vibrate,
 } from '../constants.js';
 import {
@@ -21,6 +20,14 @@ import { audio, unlockAudio, RHYTHM_TRACK_INFO } from '../audio.js';
 import { equippedOutfit, addToWallet, getWallet } from '../cosmetics.js';
 import { drawRunner } from '../runner.js';
 import * as UI from '../ui.js';
+
+// Blend two 0xRRGGBB colours; t=0 → a, t=1 → b
+const mixColor = (a, b, t) => {
+  const r = ((a >> 16) & 255) + (((b >> 16) & 255) - ((a >> 16) & 255)) * t;
+  const g = ((a >> 8) & 255) + (((b >> 8) & 255) - ((a >> 8) & 255)) * t;
+  const bl = (a & 255) + ((b & 255) - (a & 255)) * t;
+  return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(bl);
+};
 
 // ─── Game scene ───────────────────────────────────────────────────────────────
 export class GameScene extends Phaser.Scene {
@@ -43,10 +50,16 @@ export class GameScene extends Phaser.Scene {
     this.camBase = setupHiDPI(this);
     this.cameras.main.setRotation(0);
     this.cam = { x: 0, vel: 0, lean: 0, dip: 0, dipVel: 0 };
-    this.hill = 0;
-    this.targetHill = 0;
-    this.nextHillAt = 2600;
-    cam3.x = 0; cam3.bend = 0; cam3.hill = 0;
+    this.roadSegsX = [];
+    this.roadSegsY = [];
+    this.roadScheduledX = 0;
+    this.roadScheduledY = 0;
+    this.lastTurnDir = 0;
+    this.roadLean = 0;
+    this.farX = 0;
+    this.farY = 0;
+    cam3.x = 0;
+    cam3.curve = null;
     this.landSquash = 0;
     this.flipT = 0;
     this.lastNearMiss = 0;
@@ -73,9 +86,6 @@ export class GameScene extends Phaser.Scene {
     this.inputBuffer = null;
     this.jumpsUsed = 0;
     this.level = 1;
-    this.trackTurn = 0;
-    this.targetTrackTurn = 0;
-    this.nextTurnAt = TURN_CHANGE_MIN_MS;
     this.nextRhythmBeat = RHYTHM_APPROACH_BEATS;
     this.lastBeatPulse = -1;
     this.musicTime = 0;
@@ -96,6 +106,7 @@ export class GameScene extends Phaser.Scene {
     this.gameObjs = [];
     this._pools = { gfx: [], circle: [], ellipse: [], rect: [] };
 
+    this._updateCurveMap(); // seed the road tables before anything draws
     this._buildBg();
     this._buildWorldLayer();
     this._buildTrack();
@@ -232,6 +243,38 @@ export class GameScene extends Phaser.Scene {
   _buildBg() {
     // World backdrop (depth 0) provides sky + ground; only keep the combo flash overlay
     this.lightPulse = this.add.rectangle(W / 2, H / 2, W, H, 0x00e5ff, 0).setDepth(0.8);
+    // Mid-ground parallax silhouettes between backdrop and track
+    this.parallaxG = this.add.graphics().setDepth(0.9);
+    // Horizon fog band over the far track, under nearer scenery
+    this.atmosG = this.add.graphics().setDepth(3.0);
+  }
+
+  // Stitches backdrop and field together: silhouette bands that scroll with
+  // travel and pan with the road curve, plus a fog band melting the far track
+  // into the sky.
+  _updateAtmosphere() {
+    const w = WORLDS[this.worldIdx];
+    const hy = HORIZON_Y + this.farY;
+    const g = this.parallaxG;
+    g.clear();
+    const layers = [
+      { speed: 0.020, color: mixColor(w.sky[1], w.sky[0], 0.45), alpha: 0.6, h: 30, spacing: 137, seedK: 47, drift: 0.6 },
+      { speed: 0.042, color: w.sky[0], alpha: 0.8, h: 19, spacing: 101, seedK: 31, drift: 1.0 },
+    ];
+    for (const L of layers) {
+      g.fillStyle(L.color, L.alpha);
+      const scroll = this.distance * L.speed - this.farX * L.drift;
+      const first = Math.floor(scroll / L.spacing);
+      for (let k = first - 1; k < first + Math.ceil(W / L.spacing) + 2; k++) {
+        const x = k * L.spacing - scroll;
+        const jit = Math.abs((k * L.seedK) % 7);
+        g.fillEllipse(x, hy + 3, L.spacing * 1.45, (L.h + jit * 5) * 2);
+      }
+    }
+    const a = this.atmosG;
+    a.clear();
+    a.fillGradientStyle(w.sky[2], w.sky[2], w.sky[2], w.sky[2], 0.85, 0.85, 0, 0);
+    a.fillRect(-10, hy - 5, W + 20, 72);
   }
 
   _trackHalfWidth(t) {
@@ -252,21 +295,67 @@ export class GameScene extends Phaser.Scene {
     return this._curveCenterX(t) + (lane - 1) * this._trackHalfWidth(t) * 0.667;
   }
 
-  _updateTrackCurve(delta) {
-    if (this.runTime >= this.nextTurnAt) {
-      const options = [-1, -0.55, 0, 0.55, 1].filter(v => Math.sign(v) !== Math.sign(this.targetTrackTurn));
-      this.targetTrackTurn = Phaser.Utils.Array.GetRandom(options) * TURN_MAX_OFFSET;
-      this.nextTurnAt = this.runTime + Phaser.Math.Between(TURN_CHANGE_MIN_MS, TURN_CHANGE_MAX_MS);
+  // ── Road map: turns and hills anchored to world distance ───────────────────
+  // Curve segments are scheduled ahead in world space and sampled into a
+  // screen-offset table each frame. Because the road's shape lives in the
+  // world, the already-drawn path never morphs: turns appear at the horizon,
+  // sweep toward the player, and flatten out exactly as she reaches them.
+  _scheduleRoad() {
+    const horizon = this.distance + SPAWN_Z * 2.2;
+    while (this.roadScheduledX < horizon) {
+      const start = this.roadScheduledX + Phaser.Math.Between(420, 1700);
+      const len = Phaser.Math.Between(950, 1750);
+      const dir = this.lastTurnDir === 0
+        ? (Math.random() < 0.5 ? -1 : 1)
+        : (Math.random() < 0.74 ? -this.lastTurnDir : this.lastTurnDir);
+      this.lastTurnDir = dir;
+      this.roadSegsX.push({ start, end: start + len, mag: Phaser.Math.FloatBetween(0.16, 0.3) * dir });
+      this.roadScheduledX = start + len;
     }
-    if (this.runTime >= this.nextHillAt) {
-      this.targetHill = Math.random() < 0.3 ? 0 : Phaser.Math.FloatBetween(-26, 34);
-      this.nextHillAt = this.runTime + Phaser.Math.Between(4200, 7800);
+    while (this.roadScheduledY < horizon) {
+      const start = this.roadScheduledY + Phaser.Math.Between(900, 2600);
+      const len = Phaser.Math.Between(1100, 2000);
+      this.roadSegsY.push({ start, end: start + len, mag: Phaser.Math.FloatBetween(-0.11, 0.15) });
+      this.roadScheduledY = start + len;
     }
-    const dt = delta / 1000;
-    this.trackTurn += (this.targetTrackTurn - this.trackTurn) * Math.min(1, dt * 0.9);
-    this.hill += (this.targetHill - this.hill) * Math.min(1, dt * 0.45);
-    cam3.bend = this.trackTurn;
-    cam3.hill = this.hill;
+    while (this.roadSegsX.length && this.roadSegsX[0].end < this.distance - 50) this.roadSegsX.shift();
+    while (this.roadSegsY.length && this.roadSegsY[0].end < this.distance - 50) this.roadSegsY.shift();
+  }
+
+  _roadSlope(segs, d) {
+    for (const s of segs) {
+      if (d >= s.start && d <= s.end) {
+        return s.mag * Math.sin(((d - s.start) / (s.end - s.start)) * Math.PI);
+      }
+    }
+    return 0;
+  }
+
+  _updateCurveMap() {
+    this._scheduleRoad();
+    const N = 36;
+    const dz = (SPAWN_Z * 1.2) / (N - 1);
+    if (!this._tableX) {
+      this._tableX = new Float32Array(N);
+      this._tableY = new Float32Array(N);
+    }
+    let accX = 0;
+    let accY = 0;
+    this._tableX[0] = 0;
+    this._tableY[0] = 0;
+    for (let i = 1; i < N; i++) {
+      const mid = this.distance + (i - 0.5) * dz;
+      accX += this._roadSlope(this.roadSegsX, mid) * dz;
+      accY += this._roadSlope(this.roadSegsY, mid) * dz;
+      const p = zT(i * dz);
+      this._tableX[i] = accX * p;
+      this._tableY[i] = -accY * p; // elevation up → screen up
+    }
+    cam3.curve = { dz, x: this._tableX, y: this._tableY };
+    this.farX = this._tableX[N - 1];
+    this.farY = this._tableY[N - 1];
+    // Lean into the curvature just ahead of her
+    this.roadLean = this._roadSlope(this.roadSegsX, this.distance + 300);
   }
 
   _updateCamera(dt) {
@@ -277,8 +366,8 @@ export class GameScene extends Phaser.Scene {
     this.cam.x += this.cam.vel * dt;
     cam3.x = this.cam.x;
 
-    // Roll into the strafe, ease back upright
-    const leanTarget = Phaser.Math.Clamp(this.cam.vel * 0.00035, -0.04, 0.04);
+    // Roll into the strafe and into the road's curvature just ahead
+    const leanTarget = Phaser.Math.Clamp(this.cam.vel * 0.00035 + this.roadLean * 0.32, -0.055, 0.055);
     this.cam.lean += (leanTarget - this.cam.lean) * Math.min(1, dt * 9);
 
     // Landing dip spring (kicked by _onLand)
@@ -423,9 +512,12 @@ export class GameScene extends Phaser.Scene {
     };
 
     // Ground fill: extends to screen bottom so the camera-floor wraps the
-    // player; the top edge follows the hill so crests rise against the sky
-    const groundTop = HORIZON_Y + Math.min(0, this.hill) - 2;
-    g.fillGradientStyle(w.grd.far, w.grd.far, w.grd.near, w.grd.near, 1);
+    // player; the top edge follows the road elevation so crests rise against
+    // the sky. The far colour blends toward the sky so field and backdrop
+    // melt together instead of meeting at a hard line.
+    const groundTop = HORIZON_Y + Math.min(0, this.farY) - 2;
+    const farBlend = mixColor(w.grd.far, w.sky[2], 0.5);
+    g.fillGradientStyle(farBlend, farBlend, w.grd.near, w.grd.near, 1);
     g.fillRect(0, groundTop, W, H - groundTop);
 
     // Track surface: alternating tie quads locked to world distance, so the
@@ -459,8 +551,8 @@ export class GameScene extends Phaser.Scene {
     strokeLine(left, 4, w.grd.edge, 0.92 + comboEnergy * 0.08);
     strokeLine(right, 4, w.grd.edge, 0.92 + comboEnergy * 0.08);
 
-    // Horizon glow line in accent colour, tracking the hill bend
-    const hy = HORIZON_Y + this.hill;
+    // Horizon glow line in accent colour, tracking the road elevation
+    const hy = HORIZON_Y + this.farY;
     hg.lineStyle(14, w.accent, 0.07 + comboEnergy * 0.06);
     hg.beginPath(); hg.moveTo(0, hy); hg.lineTo(W, hy); hg.strokePath();
     hg.lineStyle(2.5, w.accent, 0.75 + comboEnergy * 0.2);
@@ -477,7 +569,7 @@ export class GameScene extends Phaser.Scene {
       bodyGlow: this.add.ellipse(0, 0, 56, 78, 0xfff176, 0.05).setDepth(d - 0.05),
       shield: this.add.ellipse(0, 0, 68, 88, 0x4fc3f7, 0.16).setStrokeStyle(3, 0x81d4fa, 0.92).setDepth(d + 1).setVisible(false),
       collectGlow: this.add.circle(0, 0, COLLECTION_RADIUS, 0xfff176, 0.08).setStrokeStyle(3, 0xfff176, 0.5).setDepth(d + 0.9).setVisible(this.rhythmMode),
-      magnet: this.add.circle(0, 0, 42, 0xba68c8, 0.12).setStrokeStyle(3, 0xf3e5f5, 0.8).setDepth(d + 1).setVisible(false),
+      magnet: this.add.circle(0, 0, 50, 0xba68c8, 0.12).setStrokeStyle(3, 0xf3e5f5, 0.8).setDepth(d + 1).setVisible(false),
     };
     // The whole figure is one Graphics pass per frame (see src/runner.js)
     this.playerG = this.add.graphics().setDepth(d);
@@ -709,7 +801,7 @@ export class GameScene extends Phaser.Scene {
     const lane = Phaser.Utils.Array.GetRandom([0, 1, 2].filter(v => v !== coinLane));
     const gfx = this._pGfx(5);
     this.gameObjs.push({
-      type: 'obstacle', lane, z: SPAWN_Z, worldH: 46, worldW: 34, worldD: 30, color: 0x4527a0,
+      type: 'obstacle', lane, z: SPAWN_Z, worldH: 58, worldW: 46, worldD: 38, color: 0x4527a0,
       gfx, parts: [gfx], checked: false,
       hitTime: beatIndex * this.beatMs, rhythmTimed: true,
     });
@@ -812,7 +904,7 @@ export class GameScene extends Phaser.Scene {
       } },
       { w: 14, fn: () => { // coin arc over a low crate — jump through the arc
         const lane = pickFree();
-        this._spawnCrate(lane, SPAWN_Z + 330, { h: 44 });
+        this._spawnCrate(lane, SPAWN_Z + 330, { h: 56 });
         this._spawnCoinArc(lane, SPAWN_Z, 7);
       } },
       { w: 10, fn: () => { // slalom: coins weave across lanes
@@ -848,7 +940,7 @@ export class GameScene extends Phaser.Scene {
         const free = this._freeLanes(SPAWN_Z, 900);
         if (free.length < 3) { this._spawnCoinLine(pickFree(), SPAWN_Z, 5); return; }
         const open = anyLane();
-        [0, 1, 2].filter(l => l !== open).forEach(l => this._spawnCrate(l, SPAWN_Z, { h: 78, w: 52 }));
+        [0, 1, 2].filter(l => l !== open).forEach(l => this._spawnCrate(l, SPAWN_Z, { h: 96, w: 78 }));
         this._spawnCoinLine(open, SPAWN_Z - 60, 5);
       } },
       { w: 5, fn: () => this._spawnShield(pickFree(), SPAWN_Z) },
@@ -873,7 +965,7 @@ export class GameScene extends Phaser.Scene {
       { w: 8, min: 0.45, extraGap: 400, fn: () => { // same lane: slide, then jump
         const lane = pickFree(900);
         this._spawnGate(lane, SPAWN_Z);
-        this._spawnCrate(lane, SPAWN_Z + 420, { h: 48 });
+        this._spawnCrate(lane, SPAWN_Z + 420, { h: 60 });
         this._spawnCoinArc(lane, SPAWN_Z + 200, 5);
       } },
       { w: 7, min: 0.55, extraGap: 300, fn: () => { // crate drifting across lanes
@@ -890,7 +982,7 @@ export class GameScene extends Phaser.Scene {
     const gfx = this._pGfx(5);
     this.gameObjs.push({
       type: 'obstacle', lane: laneFrom, laneFrom, laneTo, drift: true,
-      z: SPAWN_Z, worldH: 52, worldW: 42, worldD: 34, color: 0x8e24aa,
+      z: SPAWN_Z, worldH: 66, worldW: 54, worldD: 44, color: 0x8e24aa,
       gfx, parts: [gfx], checked: false,
     });
   }
@@ -945,15 +1037,15 @@ export class GameScene extends Phaser.Scene {
     return r.setDepth(depth);
   }
 
-  _spawnCrate(lane, z, { h = Phaser.Math.Between(42, 68), w = Phaser.Math.Between(34, 50) } = {}) {
+  _spawnCrate(lane, z, { h = Phaser.Math.Between(56, 88), w = Phaser.Math.Between(50, 72) } = {}) {
     const color = Phaser.Utils.Array.GetRandom([0xd32f2f, 0xe65100, 0x5d4037]);
     const gfx = this._pGfx(5);
-    this.gameObjs.push({ type: 'obstacle', lane, z, worldH: h, worldW: w, worldD: Phaser.Math.Between(28, 44), color, gfx, parts: [gfx], checked: false });
+    this.gameObjs.push({ type: 'obstacle', lane, z, worldH: h, worldW: w, worldD: Phaser.Math.Between(36, 56), color, gfx, parts: [gfx], checked: false });
   }
 
   _spawnGate(lane, z) {
     const gfx = this._pGfx(5);
-    this.gameObjs.push({ type: 'gate', lane, z, worldH: 86, worldW: 74, gfx, parts: [gfx], checked: false });
+    this.gameObjs.push({ type: 'gate', lane, z, worldH: 104, worldW: 108, gfx, parts: [gfx], checked: false });
   }
 
   _spawnShield(lane = Phaser.Math.Between(0, 2), z = SPAWN_Z) {
@@ -1009,7 +1101,7 @@ export class GameScene extends Phaser.Scene {
         collected: false,
       });
     }
-    this.gameObjs.push({ type: 'wagon', lane, z, worldW: 96, worldH: 54, worldL: WAGON_LENGTH, carIdx, gfx, coins, parts: [gfx, ...coins.flatMap(c => [c.obj, c.shine])], checked: false });
+    this.gameObjs.push({ type: 'wagon', lane, z, worldW: 128, worldH: 54, worldL: WAGON_LENGTH, carIdx, gfx, coins, parts: [gfx, ...coins.flatMap(c => [c.obj, c.shine])], checked: false });
   }
 
   // ── Projected 3D box rendering ───────────────────────────────────────────────
@@ -1151,11 +1243,11 @@ export class GameScene extends Phaser.Scene {
       this._drawGroundShadow(g, x, sy, sw * sc * 1.3, 0.2);
       // Posts: thin 3D boxes at the gate edges, in the world's material
       const postCol = { jungle: 0x5d4037, savanna: 0x8a683a, reef: 0x9e3766, deep: 0x2c2060 }[WORLDS[this.worldIdx].id];
-      this._drawBox(g, obj.lane, z, 9, obj.worldH, 14, postCol, { fracX: -sw / 2 });
-      this._drawBox(g, obj.lane, z, 9, obj.worldH, 14, postCol, { fracX: sw / 2 });
+      this._drawBox(g, obj.lane, z, 12, obj.worldH, 16, postCol, { fracX: -sw / 2 });
+      this._drawBox(g, obj.lane, z, 12, obj.worldH, 16, postCol, { fracX: sw / 2 });
       // Glowing beam across the top — slide under it
       const pulseA = 0.5 + Math.sin(this.time.now / 90) * 0.16;
-      const beam = this._drawBox(g, obj.lane, z, sw, 13, 10, 0xc62828, { base: obj.worldH - 13 });
+      const beam = this._drawBox(g, obj.lane, z, sw, 16, 12, 0xc62828, { base: obj.worldH - 16 });
       g.fillStyle(0xff8a80, pulseA * 0.5);
       g.fillRect(beam.xF - beam.hwF * 1.06, beam.tF - 3 * sc, beam.hwF * 2.12, (beam.bF - beam.tF) + 6 * sc);
       g.setDepth(dp);
@@ -1163,8 +1255,8 @@ export class GameScene extends Phaser.Scene {
 
     if (obj.type === 'shield' || obj.type === 'magnet') {
       const pulse = 1 + Math.sin(this.time.now / 130) * 0.08;
-      const r = Math.max(3, 18 * sc * pulse);
-      const cy = zTopY(z, 48);
+      const r = Math.max(3, 22 * sc * pulse);
+      const cy = zTopY(z, 56);
       obj.shadow.setPosition(x, sy + 2).setSize(r * 2.4, r * 0.65).setDepth(4.5);
       obj.ring.setPosition(x, cy).setRadius(r).setDepth(dp + 1);
       if (obj.type === 'shield') {
@@ -1179,7 +1271,7 @@ export class GameScene extends Phaser.Scene {
     if (obj.type === 'coin') {
       const timingPulse = obj.hitTime ? Math.max(0, 1 - Math.abs(this.musicTime - obj.hitTime) / RHYTHM_BEAT_WINDOW_MS) : 0;
       const pulse = 1 + Math.sin(this.time.now / 115 + obj.z) * 0.08 + timingPulse * 0.35;
-      let r = Math.max(4, (obj.hitTime ? 21 : 17.5) * sc * pulse);
+      let r = Math.max(4, (obj.hitTime ? 24 : 20) * sc * pulse);
       let cy = zTopY(z, obj.elev !== undefined ? obj.elev : 42);
       let cx = x;
       if (obj.pulling) { // magnet: visibly fly to the player
@@ -1200,8 +1292,8 @@ export class GameScene extends Phaser.Scene {
       const w = WORLDS[this.worldIdx];
       const hw = this._trackHalfWidth(t);
       const cx = this._curveCenterX(t);
-      const topY = zTopY(z, 175);
-      const postW = Math.max(2, 7 * sc);
+      const topY = zTopY(z, 205);
+      const postW = Math.max(2, 9 * sc);
       const px1 = cx - hw - 12 * sc, px2 = cx + hw + 12 * sc;
       g.fillStyle(0x000000, 0.16);
       g.fillEllipse(px1, sy + 2, postW * 3, postW);
@@ -1233,7 +1325,7 @@ export class GameScene extends Phaser.Scene {
           if (wz < -40 || wz > SPAWN_Z) continue;
           const wsc = zSc(wz);
           const wx = this._laneXZ(obj.lane, wz) + sgn * (obj.worldW / 2) * wsc * 0.92;
-          g.fillCircle(wx, zY(wz), Math.max(2, 8 * wsc));
+          g.fillCircle(wx, zY(wz), Math.max(2, 10 * wsc));
         }
       }
       // Train car: one long 3D box; the roof top-face is the walkable deck
@@ -1274,7 +1366,7 @@ export class GameScene extends Phaser.Scene {
       g.fillStyle(0x1a1a1a, 1);
       g.fillRect(f.xF - f.hwF * 0.9, f.bF - 6 * sc, f.hwF * 1.8, 6 * sc);
       // Wheels under the front face
-      const wr = Math.max(2, 9 * sc);
+      const wr = Math.max(2, 11 * sc);
       g.fillStyle(0x111111, 1);
       g.fillCircle(f.xF - f.hwF * 0.55, f.bF, wr);
       g.fillCircle(f.xF + f.hwF * 0.55, f.bF, wr);
@@ -1298,7 +1390,7 @@ export class GameScene extends Phaser.Scene {
         const coinTop = zTopY(coinZ, WAGON_TOP);
         // Clamp the near-field size: roof coins right at the camera otherwise
         // balloon into overlapping blobs
-        const cr = Phaser.Math.Clamp(15.75 * coinSc, 3, 17);
+        const cr = Phaser.Math.Clamp(18 * coinSc, 3, 20);
         const cy = coinTop - cr - 4 * coinSc;
         const coinDepth = 5 + Math.min(zT(coinZ), 1) * 5;
         c.obj.setPosition(coinX, cy).setRadius(cr).setDepth(coinDepth + 1);
@@ -1346,7 +1438,7 @@ export class GameScene extends Phaser.Scene {
 
     if (obj.type === 'gate') {
       obj.checked = true;
-      const cleared = this.slideTimer > 0 || this.jumpH > 76;
+      const cleared = this.slideTimer > 0 || this.jumpH > 86;
       if (cleared) this._addScore(12, this.slideTimer > 0 ? 'Slide!' : 'Vault!');
       else if (this._consumeShield('Shield blocked gate')) obj.consumed = true;
       else this._gameOver('Slide under red gates');
@@ -1642,12 +1734,13 @@ export class GameScene extends Phaser.Scene {
         this._dustPuff(this.pX + Phaser.Math.Between(-12, 12), PLAYER_ANCHOR_Y + 2, 2);
       }
     }
-    this._updateTrackCurve(delta);
+    this._updateCurveMap();
     this._updateCamera(dt);
     this._redrawTrack();
+    this._updateAtmosphere();
     this._redrawHitLine();
     if (this.lightPulse) this.lightPulse.setAlpha((this.beatPulse || 0) * 0.045 + this.collectPulse * 0.035);
-    if (this.bdG) { this.bdG.x = -this.trackTurn * 0.5; this.bdG.y = this.hill * 0.55; }
+    if (this.bdG) { this.bdG.x = -this.farX * 0.45; this.bdG.y = this.farY * 0.5; }
     if (this.beatHalo) this.beatHalo.setPosition(this.pX, PLAYER_ANCHOR_Y - 40);
 
     if (Phaser.Input.Keyboard.JustDown(this.cursors.up) || Phaser.Input.Keyboard.JustDown(this.wKey) || Phaser.Input.Keyboard.JustDown(this.spaceKey)) this._jump();

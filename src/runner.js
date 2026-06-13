@@ -65,16 +65,43 @@ const ponytail = (g, pal, x, y, rot) => {
   g.fillCircle(x, y, 2.4);
 };
 
+// Two-segment leg: thigh from the hip, calf folding at the knee. The
+// back-swinging leg kicks its heel up behind her (sole toward the camera) —
+// the signature read of a run cycle seen from the back. The fold eases in
+// with kick² so mid-swing the foot stays under her instead of flying sideways.
+const drawLeg = (g, hipX, side, s, tuck, pal, shoeC) => {
+  const kick = Math.max(0, -s);
+  const fold = Math.min(1, kick * kick + tuck * 0.55);
+  const thighLen = 16 * (1 - tuck * 0.3);
+  const calfLen = 15 * (1 - kick * 0.18 - tuck * 0.25);
+  g.save();
+  g.translateCanvas(hipX, 6);
+  g.rotateCanvas(side * (0.05 + tuck * 0.3) + s * 0.06);
+  g.fillStyle(pal.legs, 1);
+  g.fillRoundedRect(-5.5, -3.3, 11, thighLen + 3.3, 5.5);
+  g.translateCanvas(0, thighLen);
+  g.rotateCanvas(-side * fold * 2.35);
+  g.fillStyle(shade(pal.legs, -8), 1);
+  g.fillRoundedRect(-4.75, -2.8, 9.5, calfLen + 2.8, 4.75);
+  g.fillStyle(shoeC, 1);
+  g.fillRoundedRect(-6.25, calfLen - 4, 12.5, 8, 4);
+  g.fillStyle(0xf3f6fa, 1);
+  g.fillRoundedRect(-6.25, calfLen + 2, 12.5, 3.2, 1.6);
+  g.restore();
+};
+
 function uprightPose(g, p, pal) {
   const swing = p.swing || 0;
   const tuck = p.tuck || 0;
   const shoeC = shade(pal.legs, -26);
 
-  // Legs: the forward leg reads shorter from behind; tuck pulls both up
-  const lenL = 33 * (1 - tuck * 0.42) * (1 - Math.max(0, swing) * 0.2);
-  const lenR = 33 * (1 - tuck * 0.42) * (1 - Math.max(0, -swing) * 0.2);
-  limb(g, -7, 6, -swing * 0.16 + tuck * 0.3, 11, lenL, pal.legs, { kind: 'shoe', color: shoeC });
-  limb(g, 7, 6, swing * 0.16 - tuck * 0.3, 11, lenR, pal.legs, { kind: 'shoe', color: shoeC });
+  drawLeg(g, -7, -1, swing, tuck, pal, shoeC);
+  drawLeg(g, 7, 1, -swing, tuck, pal, shoeC);
+
+  // The torso group sways gently against the stride
+  g.save();
+  g.translateCanvas(swing * 1.6, 0);
+  g.rotateCanvas(swing * 0.035);
 
   // Jacket with hem band and soft lower shading
   g.fillStyle(pal.body, 1);
@@ -101,8 +128,8 @@ function uprightPose(g, p, pal) {
   // shorter and its hand rises — not a sideways sweep across the back.
   const reachL = Math.max(0, swing);
   const reachR = Math.max(0, -swing);
-  const armLenL = 23 * (1 - 0.34 * reachL + 0.08 * reachR) * (1 - tuck * 0.15);
-  const armLenR = 23 * (1 - 0.34 * reachR + 0.08 * reachL) * (1 - tuck * 0.15);
+  const armLenL = 23 * (1 - 0.42 * reachL + 0.1 * reachR) * (1 - tuck * 0.15);
+  const armLenR = 23 * (1 - 0.42 * reachR + 0.1 * reachL) * (1 - tuck * 0.15);
   limb(g, -16.5, -13, 0.12 + swing * 0.07 + tuck * 0.8, 9, armLenL, pal.arms, { kind: 'hand', color: SKIN });
   limb(g, 16.5, -13, -0.12 + swing * 0.07 - tuck * 0.8, 9, armLenR, pal.arms, { kind: 'hand', color: SKIN });
 
@@ -116,7 +143,9 @@ function uprightPose(g, p, pal) {
 
   headphones(g, -34);
   // Anchored high on the right so it swings clear of the hair dome
-  ponytail(g, pal, 8, -42, 0.85 + (p.tailSway || 0) * 0.14 + (p.lean || 0) * -1.8);
+  ponytail(g, pal, 8, -42, 0.85 + (p.tailSway || 0) * 0.16 + (p.lean || 0) * -1.8);
+
+  g.restore();
 }
 
 function slidePose(g, p, pal) {
