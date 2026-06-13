@@ -1,4 +1,9 @@
-// Procedural audio manager — Web Audio API, no files needed
+// Procedural audio manager — Web Audio API, no files needed.
+//
+// 2026 mobile-game voice: every note runs through a lowpass filter + ADSR for
+// a warm, non-fatiguing tone (no raw chiptune edges), the whole mix glues
+// through a compressor, and a procedural convolution reverb gives the music
+// and SFX a sense of space. Drums are real filtered-noise hits, not bleeps.
 
 class AudioManager {
   constructor() {
@@ -23,21 +28,64 @@ class AudioManager {
     if (!AudioContextCtor) return false;
 
     this._ctx = new AudioContextCtor();
+    const ctx = this._ctx;
 
-    this._musicGain = this._ctx.createGain();
-    this._musicGain.connect(this._ctx.destination);
+    // Master glue compressor → destination
+    this._master = ctx.createDynamicsCompressor();
+    this._master.threshold.value = -16;
+    this._master.knee.value = 22;
+    this._master.ratio.value = 3;
+    this._master.attack.value = 0.005;
+    this._master.release.value = 0.2;
+    this._master.connect(ctx.destination);
 
-    this._sfxGain = this._ctx.createGain();
-    this._sfxGain.connect(this._ctx.destination);
+    this._musicGain = ctx.createGain();
+    this._musicGain.connect(this._master);
+
+    this._sfxGain = ctx.createGain();
+    this._sfxGain.connect(this._master);
+
+    // Convolution reverb send shared by music + SFX
+    this._reverb = ctx.createConvolver();
+    this._reverb.buffer = this._makeImpulse(2.4, 2.8);
+    this._reverbReturn = ctx.createGain();
+    this._reverbReturn.gain.value = 0.85;
+    this._reverb.connect(this._reverbReturn);
+    this._reverbReturn.connect(this._master);
+
+    // Shared white-noise buffer for percussion
+    this._noise = this._makeNoise(1);
 
     this._applyGains();
     return true;
   }
 
+  _makeImpulse(seconds, decay) {
+    const ctx = this._ctx;
+    const len = Math.floor(ctx.sampleRate * seconds);
+    const buf = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const data = buf.getChannelData(ch);
+      for (let i = 0; i < len; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+      }
+    }
+    return buf;
+  }
+
+  _makeNoise(seconds) {
+    const ctx = this._ctx;
+    const len = Math.floor(ctx.sampleRate * seconds);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    return buf;
+  }
+
   _applyGains() {
     if (!this._ctx) return;
-    this._musicGain.gain.value = this._muted ? 0 : 0.38 * this._musicVol;
-    this._sfxGain.gain.value = this._muted ? 0 : 0.75 * this._sfxVol;
+    this._musicGain.gain.value = this._muted ? 0 : 0.34 * this._musicVol;
+    this._sfxGain.gain.value = this._muted ? 0 : 0.7 * this._sfxVol;
   }
 
   setMusicVolume(frac) {
@@ -78,94 +126,203 @@ class AudioManager {
     return 440 * Math.pow(2, (midi - 69) / 12);
   }
 
-  _note(midi, t, dur, vol = 0.15, type = 'square', bus = 'music') {
+  // ── Core synth voice ───────────────────────────────────────────────────────
+  // Filtered, optionally detuned tone with a soft attack/decay/release and a
+  // reverb send. This single voice builds every melodic/harmonic part.
+  _voice(midi, t, dur, opts = {}) {
     const ctx = this._ctx;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = type;
-    osc.frequency.value = this._freq(midi);
-    gain.gain.setValueAtTime(vol, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + dur * 0.88);
-    osc.connect(gain);
-    gain.connect(bus === 'sfx' ? this._sfxGain : this._musicGain);
-    osc.start(t);
-    osc.stop(t + dur + 0.03);
+    if (!ctx) return;
+    const {
+      type = 'sawtooth', vol = 0.1, bus = 'music',
+      cutoff = 2200, q = 1, detune = 0, reverb = 0.16,
+      attack = 0.012, release = 0.16, sub = false, glide = 0,
+    } = opts;
+    const freq = this._freq(midi);
+
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'lowpass';
+    filt.frequency.value = cutoff;
+    filt.Q.value = q;
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + attack);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0001, vol * 0.6), t + Math.max(attack + 0.02, dur * 0.55));
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur + release);
+
+    filt.connect(g);
+    g.connect(bus === 'sfx' ? this._sfxGain : this._musicGain);
+    if (reverb > 0 && this._reverb) {
+      const send = ctx.createGain();
+      send.gain.value = reverb;
+      g.connect(send);
+      send.connect(this._reverb);
+    }
+
+    const stopAt = t + dur + release + 0.05;
+    const mkOsc = (det) => {
+      const o = ctx.createOscillator();
+      o.type = type;
+      o.detune.value = det;
+      if (glide > 0) {
+        o.frequency.setValueAtTime(this._freq(midi - glide), t);
+        o.frequency.exponentialRampToValueAtTime(freq, t + 0.06);
+      } else {
+        o.frequency.value = freq;
+      }
+      o.connect(filt);
+      o.start(t);
+      o.stop(stopAt);
+    };
+    mkOsc(detune);
+    if (detune) mkOsc(-detune); // supersaw width
+
+    if (sub) {
+      const so = ctx.createOscillator();
+      so.type = 'sine';
+      so.frequency.value = freq / 2;
+      const sg = ctx.createGain();
+      sg.gain.setValueAtTime(0.0001, t);
+      sg.gain.exponentialRampToValueAtTime(vol * 0.8, t + attack);
+      sg.gain.exponentialRampToValueAtTime(0.0001, t + dur + release);
+      so.connect(sg);
+      sg.connect(this._musicGain);
+      so.start(t);
+      so.stop(stopAt);
+    }
   }
 
-  _kick(t) {
+  // ── Percussion (filtered noise + tonal bodies) ──────────────────────────────
+  _noiseHit(t, { dur = 0.06, type = 'highpass', freq = 8000, q = 1, vol = 0.2, bus = 'music', reverb = 0 } = {}) {
+    const ctx = this._ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this._noise;
+    const filt = ctx.createBiquadFilter();
+    filt.type = type;
+    filt.frequency.value = freq;
+    filt.Q.value = q;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(filt);
+    filt.connect(g);
+    g.connect(bus === 'sfx' ? this._sfxGain : this._musicGain);
+    if (reverb > 0 && this._reverb) {
+      const send = ctx.createGain();
+      send.gain.value = reverb;
+      g.connect(send);
+      send.connect(this._reverb);
+    }
+    src.start(t);
+    src.stop(t + dur + 0.02);
+  }
+
+  _kick(t, vol = 0.9) {
     const ctx = this._ctx;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(110, t);
-    osc.frequency.exponentialRampToValueAtTime(28, t + 0.12);
-    gain.gain.setValueAtTime(0.35, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    osc.frequency.setValueAtTime(150, t);
+    osc.frequency.exponentialRampToValueAtTime(45, t + 0.08);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.42 * vol, t + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
     osc.connect(gain);
     gain.connect(this._musicGain);
     osc.start(t);
-    osc.stop(t + 0.22);
+    osc.stop(t + 0.3);
+    // transient click
+    this._noiseHit(t, { dur: 0.02, type: 'highpass', freq: 2600, vol: 0.12 * vol });
   }
 
-  // ── Menu music — dreamy, slow arpeggio in C major ─────────────────────────
+  _snare(t, vol = 1) {
+    // noise body + short tonal ring
+    this._noiseHit(t, { dur: 0.16, type: 'bandpass', freq: 1900, q: 0.7, vol: 0.22 * vol, reverb: 0.14 });
+    const ctx = this._ctx;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(330, t);
+    osc.frequency.exponentialRampToValueAtTime(180, t + 0.08);
+    gain.gain.setValueAtTime(0.12 * vol, t);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+    osc.connect(gain);
+    gain.connect(this._musicGain);
+    osc.start(t);
+    osc.stop(t + 0.12);
+  }
+
+  _hat(t, open = false) {
+    this._noiseHit(t, { dur: open ? 0.12 : 0.04, type: 'highpass', freq: 9000, vol: open ? 0.06 : 0.05 });
+  }
+
+  _clap(t, vol = 1) {
+    [0, 0.012, 0.024].forEach((o) =>
+      this._noiseHit(t + o, { dur: 0.09, type: 'bandpass', freq: 1700, q: 0.8, vol: 0.13 * vol, reverb: 0.18 }));
+  }
+
+  // ── Menu music — warm dreamy lo-fi in C ─────────────────────────────────────
 
   _scheduleMenu(startTime) {
-    const BPM = 84, beat = 60 / BPM;
+    const BPM = 82, beat = 60 / BPM;
     const len = 16 * beat;
 
-    // Rising/falling melody (triangle, soft)
-    const mel = [72,76,79,81, 79,76,72,69, 71,74,77,79, 77,74,71,67];
-    mel.forEach((n, i) => {
-      this._note(n, startTime + i * beat * 0.5, beat * 0.42, 0.11, 'triangle');
-    });
-
-    // Chord pads (sine, very gentle, 4-beat blocks)
-    [[60,64,67],[57,60,64],[55,59,62],[53,57,60]].forEach(([a, b, c], i) => {
+    // Soft electric-piano chords (filtered triangle stacks, lots of reverb)
+    [[60, 64, 67], [57, 60, 64], [55, 59, 62], [53, 57, 60]].forEach(([a, b, c], i) => {
       const t = startTime + i * beat * 4;
-      [a, b, c].forEach(n => this._note(n, t, beat * 3.7, 0.055, 'sine'));
+      [a, b, c].forEach((n, k) =>
+        this._voice(n + 12, t, beat * 3.6, { type: 'triangle', vol: 0.05, cutoff: 1500, reverb: 0.3, attack: 0.04 + k * 0.01, release: 0.5 }));
     });
 
-    // Slow bass walk (sine)
-    [48, 45, 47, 43].forEach((n, i) => {
-      this._note(n, startTime + i * beat * 4, beat * 3.4, 0.09, 'sine');
-    });
+    // Gentle bell melody
+    const mel = [72, 76, 79, 81, 79, 76, 72, 69, 71, 74, 77, 79, 77, 74, 71, 67];
+    mel.forEach((n, i) =>
+      this._voice(n, startTime + i * beat * 0.5, beat * 0.45, { type: 'triangle', vol: 0.06, cutoff: 2600, reverb: 0.34, attack: 0.005, release: 0.3 }));
+
+    // Sub bass walk
+    [48, 45, 47, 43].forEach((n, i) =>
+      this._voice(n, startTime + i * beat * 4, beat * 3.4, { type: 'sine', vol: 0.12, cutoff: 600, reverb: 0.08, attack: 0.03 }));
+
+    // Soft shaker on offbeats
+    for (let i = 0; i < 16; i++) this._noiseHit(startTime + (i + 0.5) * beat, { dur: 0.03, type: 'highpass', freq: 7000, vol: 0.02 });
 
     return len;
   }
 
-  // ── Game music — upbeat chiptune, 140 BPM ────────────────────────────────
+  // ── Game music — warm synthwave, 140 BPM ────────────────────────────────────
 
   _scheduleGame(startTime) {
     const BPM = 140, beat = 60 / BPM;
     const len = 16 * beat;
+    const swing = beat * 0.06;
 
-    // Melody (square)
-    const mel = [67,67,71,72, 74,72,71,69, 67,69,71,72, 71,69,67,64];
-    mel.forEach((n, i) => {
-      this._note(n, startTime + i * beat, beat * 0.78, 0.08, 'square');
+    // Plucky saw lead (detuned, filtered, short) with a touch of delay-ish reverb
+    const mel = [67, 67, 71, 72, 74, 72, 71, 69, 67, 69, 71, 72, 71, 69, 67, 64];
+    mel.forEach((n, i) =>
+      this._voice(n, startTime + i * beat + (i % 2 ? swing : 0), beat * 0.5, {
+        type: 'sawtooth', vol: 0.07, cutoff: 2400, q: 2, detune: 8, reverb: 0.2, attack: 0.006, release: 0.18,
+      }));
+
+    // Warm filtered sub bass
+    const bass = [48, 48, 47, 47, 45, 45, 47, 47, 48, 48, 47, 47, 45, 43, 45, 47];
+    bass.forEach((n, i) =>
+      this._voice(n, startTime + i * beat, beat * 0.46, { type: 'sawtooth', vol: 0.1, cutoff: 520, q: 3, reverb: 0.05, sub: true, attack: 0.008 }));
+
+    // Pad swells under it
+    [[55, 59, 62], [53, 57, 60], [52, 55, 59], [50, 53, 57]].forEach(([a, b, c], i) => {
+      const t = startTime + i * beat * 4;
+      [a, b, c].forEach((n) => this._voice(n, t, beat * 3.6, { type: 'sawtooth', vol: 0.022, cutoff: 1100, detune: 10, reverb: 0.3, attack: 0.2, release: 0.5 }));
     });
 
-    // Running bass (sawtooth, every beat)
-    const bass = [48,48,47,47, 45,45,47,47, 48,48,47,47, 45,43,45,47];
-    bass.forEach((n, i) => {
-      this._note(n, startTime + i * beat, beat * 0.44, 0.10, 'sawtooth');
-    });
-
-    // Offbeat hi-hat (short high triangle)
-    for (let i = 1; i < 16; i += 2) {
-      this._note(98, startTime + i * beat, beat * 0.07, 0.035, 'triangle');
-    }
-
-    // Kick on beats 1, 5, 9, 13
-    [0, 4, 8, 12].forEach(i => this._kick(startTime + i * beat));
+    // Four-on-the-floor kick, claps on 2 & 4, offbeat hats
+    [0, 4, 8, 12].forEach((i) => this._kick(startTime + i * beat));
+    [4, 12].forEach((i) => this._clap(startTime + i * beat));
+    for (let i = 0; i < 16; i++) this._hat(startTime + (i + 0.5) * beat, i % 4 === 3);
 
     return len;
   }
 
-
-  // ── Rhythm Run music — three tracks, layered by combo intensity ───────────
-  // The game registers an intensity callback (0–2); extra layers join at each
-  // 16-beat loop boundary so the music grows with the player's streak.
+  // ── Rhythm Run — three tracks, layered by combo intensity ───────────────────
 
   setIntensityCallback(fn) {
     this._intensityFn = fn;
@@ -182,25 +339,26 @@ class AudioManager {
 
     lead.forEach((n, i) => {
       if (n === null) return;
-      this._note(n, startTime + i * beat, beat * 0.32, i % 4 === 0 ? 0.13 : 0.09, 'square');
+      this._voice(n, startTime + i * beat, beat * 0.42, {
+        type: 'sawtooth', vol: i % 4 === 0 ? 0.085 : 0.06, cutoff: 2600, q: 2, detune: 7, reverb: 0.22, attack: 0.005, release: 0.16,
+      });
     });
-    bass.forEach((n, i) => {
-      this._note(n, startTime + i * beat, beat * 0.36, 0.12, 'sawtooth');
-    });
+    bass.forEach((n, i) =>
+      this._voice(n, startTime + i * beat, beat * 0.44, { type: 'sawtooth', vol: 0.1, cutoff: 540, q: 3, sub: true, reverb: 0.05 }));
 
     // Drum grid: kick on downbeats, snare on 2 and 4.
-    [0, 4, 8, 12].forEach(i => this._kick(startTime + i * beat));
-    [2, 6, 10, 14].forEach(i => this._snare(startTime + i * beat));
+    [0, 4, 8, 12].forEach((i) => this._kick(startTime + i * beat));
+    [4, 12].forEach((i) => this._snare(startTime + i * beat));
 
     // Layer 1 (combo warm): hats on eighth notes.
     if (intensity >= 1) {
-      for (let i = 0; i < 32; i++) this._hat(startTime + i * beat * 0.5);
+      for (let i = 0; i < 32; i++) this._hat(startTime + i * beat * 0.5, i % 8 === 7);
     }
-    // Layer 2 (combo hot): sparkling arp counter-melody an octave up.
+    // Layer 2 (combo hot): sparkling arp an octave up.
     if (intensity >= 2) {
       lead.forEach((n, i) => {
         if (n === null || i % 2 === 0) return;
-        this._note(n + 12, startTime + (i + 0.5) * beat, beat * 0.16, 0.05, 'triangle');
+        this._voice(n + 12, startTime + (i + 0.5) * beat, beat * 0.18, { type: 'triangle', vol: 0.045, cutoff: 4000, reverb: 0.3, attack: 0.003, release: 0.12 });
       });
     }
     return len;
@@ -222,25 +380,6 @@ class AudioManager {
     return this._scheduleRhythmCore(startTime, 152,
       [76, 79, 83, 79, 84, 83, 79, 76, 78, 81, 84, 81, 86, 84, 81, 78],
       [48, 48, 48, 43, 45, 45, 45, 40, 48, 48, 48, 43, 45, 47, 48, 50]);
-  }
-
-  _snare(t) {
-    const ctx = this._ctx;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(190, t);
-    osc.frequency.exponentialRampToValueAtTime(95, t + 0.09);
-    gain.gain.setValueAtTime(0.24, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.11);
-    osc.connect(gain);
-    gain.connect(this._musicGain);
-    osc.start(t);
-    osc.stop(t + 0.13);
-  }
-
-  _hat(t) {
-    this._note(103, t, 0.035, 0.028, 'triangle');
   }
 
   // ── Loop driver ───────────────────────────────────────────────────────────
@@ -323,105 +462,60 @@ class AudioManager {
   jump() {
     if (!this._init()) return;
     this.unlock();
-    const ctx = this._ctx, t = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'square';
-    osc.frequency.setValueAtTime(180, t);
-    osc.frequency.exponentialRampToValueAtTime(520, t + 0.09);
-    gain.gain.setValueAtTime(0.18, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
-    osc.connect(gain);
-    gain.connect(this._sfxGain);
-    osc.start(t);
-    osc.stop(t + 0.15);
+    const t = this._ctx.currentTime;
+    // soft upward pluck with a whoosh of filtered noise
+    this._voice(69, t, 0.16, { type: 'triangle', vol: 0.16, bus: 'sfx', cutoff: 3000, reverb: 0.12, attack: 0.004, release: 0.12, glide: -7 });
+    this._noiseHit(t, { dur: 0.14, type: 'highpass', freq: 1200, q: 0.6, vol: 0.06, bus: 'sfx' });
   }
 
   land() {
     if (!this._init()) return;
     this.unlock();
-    const ctx = this._ctx, t = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(220, t);
-    osc.frequency.exponentialRampToValueAtTime(80, t + 0.08);
-    gain.gain.setValueAtTime(0.22, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
-    osc.connect(gain);
-    gain.connect(this._sfxGain);
-    osc.start(t);
-    osc.stop(t + 0.12);
+    const t = this._ctx.currentTime;
+    this._voice(45, t, 0.12, { type: 'sine', vol: 0.2, bus: 'sfx', cutoff: 900, reverb: 0.06, attack: 0.002, release: 0.08, glide: 6 });
+    this._noiseHit(t, { dur: 0.07, type: 'lowpass', freq: 2400, vol: 0.1, bus: 'sfx' });
   }
 
   coin() {
     if (!this._init()) return;
     this.unlock();
     const t = this._ctx.currentTime;
-    [79, 83, 86].forEach((n, i) => {
-      this._note(n, t + i * 0.055, 0.11, 0.22, 'square', 'sfx');
-    });
+    // bright two-note bell with a shimmer of reverb
+    [84, 91].forEach((n, i) =>
+      this._voice(n, t + i * 0.05, 0.18, { type: 'triangle', vol: 0.18, bus: 'sfx', cutoff: 6000, reverb: 0.26, attack: 0.002, release: 0.18 }));
   }
 
   switchLane() {
     if (!this._init()) return;
     this.unlock();
-    const ctx = this._ctx, t = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(380, t);
-    osc.frequency.exponentialRampToValueAtTime(760, t + 0.065);
-    gain.gain.setValueAtTime(0.16, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
-    osc.connect(gain);
-    gain.connect(this._sfxGain);
-    osc.start(t);
-    osc.stop(t + 0.1);
+    const t = this._ctx.currentTime;
+    // quick filtered whoosh
+    this._noiseHit(t, { dur: 0.1, type: 'bandpass', freq: 2400, q: 0.5, vol: 0.12, bus: 'sfx', reverb: 0.08 });
+    this._voice(76, t, 0.08, { type: 'triangle', vol: 0.05, bus: 'sfx', cutoff: 3200, reverb: 0.08, attack: 0.003, release: 0.06, glide: -4 });
   }
 
   powerUp() {
     if (!this._init()) return;
     this.unlock();
     const t = this._ctx.currentTime;
-    [72, 76, 79, 84].forEach((n, i) => {
-      this._note(n, t + i * 0.045, 0.13, 0.18, 'triangle', 'sfx');
-    });
+    [72, 76, 79, 84].forEach((n, i) =>
+      this._voice(n, t + i * 0.05, 0.2, { type: 'triangle', vol: 0.13, bus: 'sfx', cutoff: 5000, reverb: 0.28, attack: 0.004, release: 0.2 }));
   }
 
   shieldBreak() {
     if (!this._init()) return;
     this.unlock();
-    const ctx = this._ctx, t = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(760, t);
-    osc.frequency.exponentialRampToValueAtTime(170, t + 0.16);
-    gain.gain.setValueAtTime(0.24, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
-    osc.connect(gain);
-    gain.connect(this._sfxGain);
-    osc.start(t);
-    osc.stop(t + 0.22);
+    const t = this._ctx.currentTime;
+    this._voice(72, t, 0.22, { type: 'sawtooth', vol: 0.16, bus: 'sfx', cutoff: 2600, q: 4, detune: 12, reverb: 0.2, attack: 0.003, release: 0.18, glide: 10 });
+    this._noiseHit(t, { dur: 0.22, type: 'bandpass', freq: 3000, q: 0.5, vol: 0.16, bus: 'sfx', reverb: 0.22 });
   }
 
   // Low double-thump while the chaser is close
   heartbeat() {
     if (!this._init()) return;
-    const ctx = this._ctx, t = ctx.currentTime;
-    [0, 0.18].forEach((off, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(58 - i * 6, t + off);
-      gain.gain.setValueAtTime(i ? 0.16 : 0.24, t + off);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + off + 0.14);
-      osc.connect(gain);
-      gain.connect(this._sfxGain);
-      osc.start(t + off);
-      osc.stop(t + off + 0.16);
-    });
+    const t = this._ctx.currentTime;
+    [0, 0.2].forEach((off, i) =>
+      this._voice(33 - i * 2, t + off, 0.16, { type: 'sine', vol: i ? 0.16 : 0.24, bus: 'sfx', cutoff: 400, reverb: 0.1, attack: 0.004, release: 0.12 }));
   }
 
   gameOver() {
@@ -429,23 +523,11 @@ class AudioManager {
     this.unlock();
     this.stop();
     const t = this._ctx.currentTime;
-    // Descending wail
-    [72, 69, 65, 60].forEach((n, i) => {
-      this._note(n, t + i * 0.17, 0.28, 0.18, 'sawtooth', 'sfx');
-    });
-    // Final thud
-    const ctx = this._ctx;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(90, t + 0.72);
-    osc.frequency.exponentialRampToValueAtTime(18, t + 1.05);
-    gain.gain.setValueAtTime(0.55, t + 0.72);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 1.1);
-    osc.connect(gain);
-    gain.connect(this._sfxGain);
-    osc.start(t + 0.72);
-    osc.stop(t + 1.15);
+    // warm descending fall
+    [72, 69, 65, 60].forEach((n, i) =>
+      this._voice(n, t + i * 0.16, 0.3, { type: 'sawtooth', vol: 0.14, bus: 'sfx', cutoff: 1800, q: 2, detune: 8, reverb: 0.3, attack: 0.006, release: 0.26 }));
+    // soft sub thud
+    this._voice(36, t + 0.66, 0.5, { type: 'sine', vol: 0.3, bus: 'sfx', cutoff: 500, reverb: 0.2, attack: 0.004, release: 0.4, glide: 8 });
   }
 }
 

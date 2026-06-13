@@ -249,17 +249,19 @@ export class GameScene extends Phaser.Scene {
     this.atmosG = this.add.graphics().setDepth(3.0);
   }
 
-  // Stitches backdrop and field together: silhouette bands that scroll with
-  // travel and pan with the road curve, plus a fog band melting the far track
-  // into the sky.
+  // Stitches backdrop and field into one continuous scene. Two layers of
+  // rolling hills sit ON the horizon and are tinted toward the haze colour;
+  // a soft haze band then straddles the horizon so the far field, the hills
+  // and the lower sky all melt together with no hard seam anywhere.
   _updateAtmosphere() {
     const w = WORLDS[this.worldIdx];
     const hy = HORIZON_Y + this.farY;
+    const haze = w.sky[2];
     const g = this.parallaxG;
     g.clear();
     const layers = [
-      { speed: 0.020, color: mixColor(w.sky[1], w.sky[0], 0.45), alpha: 0.6, h: 30, spacing: 137, seedK: 47, drift: 0.6 },
-      { speed: 0.042, color: w.sky[0], alpha: 0.8, h: 19, spacing: 101, seedK: 31, drift: 1.0 },
+      { speed: 0.016, color: mixColor(w.sky[1], haze, 0.55), alpha: 0.5, h: 36, spacing: 152, seedK: 47, drift: 0.5 },
+      { speed: 0.038, color: mixColor(w.sky[0], haze, 0.32), alpha: 0.7, h: 22, spacing: 104, seedK: 31, drift: 0.92 },
     ];
     for (const L of layers) {
       g.fillStyle(L.color, L.alpha);
@@ -268,13 +270,23 @@ export class GameScene extends Phaser.Scene {
       for (let k = first - 1; k < first + Math.ceil(W / L.spacing) + 2; k++) {
         const x = k * L.spacing - scroll;
         const jit = Math.abs((k * L.seedK) % 7);
-        g.fillEllipse(x, hy + 3, L.spacing * 1.45, (L.h + jit * 5) * 2);
+        g.fillEllipse(x, hy + 12, L.spacing * 1.5, (L.h + jit * 5) * 2);
       }
     }
+    // Haze band centred on the horizon: rises into the sky and spills well
+    // onto the field, peaking right at the seam so the field's leading edge
+    // dissolves rather than reading as a bright green line.
     const a = this.atmosG;
     a.clear();
-    a.fillGradientStyle(w.sky[2], w.sky[2], w.sky[2], w.sky[2], 0.85, 0.85, 0, 0);
-    a.fillRect(-10, hy - 5, W + 20, 72);
+    // sky side: transparent up → haze at horizon
+    a.fillGradientStyle(haze, haze, haze, haze, 0, 0, 0.72, 0.72);
+    a.fillRect(-10, hy - 74, W + 20, 74);
+    // intense core right on the seam hides the field's leading edge entirely
+    a.fillGradientStyle(haze, haze, haze, haze, 0.92, 0.92, 0.42, 0.42);
+    a.fillRect(-10, hy, W + 20, 46);
+    // long soft tail spilling down the field
+    a.fillGradientStyle(haze, haze, haze, haze, 0.42, 0.42, 0, 0);
+    a.fillRect(-10, hy + 46, W + 20, 96);
   }
 
   _trackHalfWidth(t) {
@@ -286,6 +298,15 @@ export class GameScene extends Phaser.Scene {
 
   _curveCenterX(t) {
     return centerX(t);
+  }
+
+  // The player's current fractional lane derived from her on-screen position,
+  // not the instantly-snapped target pLane. Collisions, roof-riding and coin
+  // pickup all key off this so the hitbox matches where she is actually drawn.
+  _playerLaneF() {
+    const center = this._curveCenterX(1); // player plane, z=0 → t=1
+    const hw = this._trackHalfWidth(1);
+    return 1 + (this.pX - center) / (hw * 0.667);
   }
 
   _laneXZ(lane, z) {
@@ -516,7 +537,9 @@ export class GameScene extends Phaser.Scene {
     // the sky. The far colour blends toward the sky so field and backdrop
     // melt together instead of meeting at a hard line.
     const groundTop = HORIZON_Y + Math.min(0, this.farY) - 2;
-    const farBlend = mixColor(w.grd.far, w.sky[2], 0.5);
+    // Far edge melts toward the horizon haze so the top of the field reads as
+    // the same atmosphere as the sky, not a separate green slab.
+    const farBlend = mixColor(w.grd.far, w.sky[2], 0.66);
     g.fillGradientStyle(farBlend, farBlend, w.grd.near, w.grd.near, 1);
     g.fillRect(0, groundTop, W, H - groundTop);
 
@@ -663,20 +686,26 @@ export class GameScene extends Phaser.Scene {
     this.pKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
     this.escKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
 
-    // Gestures fire on pointermove the moment the threshold is crossed (lower
-    // latency than waiting for pointerup), then re-anchor so a held swipe can
-    // chain into the next gesture without lifting the finger.
-    this.input.on('pointerdown', p => { unlockAudio(); this._touch = { x: p.x, y: p.y }; this._touchHeld = true; });
+    // One swipe = one action. The gesture fires the moment the threshold is
+    // crossed, then locks until the finger lifts — so a single physical swipe
+    // can never register as two lane changes. A fresh stroke (lift + swipe)
+    // is needed for the next action, which is how Subway Surfers et al. feel.
+    this.input.on('pointerdown', p => {
+      unlockAudio();
+      document.activeElement?.blur?.(); // keep keys flowing to the game
+      this._touch = { x: p.x, y: p.y, armed: true };
+      this._touchHeld = true;
+    });
     this.input.on('pointermove', p => {
       if (!this._touch || this.pausedRun || !this.alive) return;
       const dx = p.x - this._touch.x;
       const dy = p.y - this._touch.y;
       const thr = TOUCH_THRESHOLD * DPR; // pointer coords are in framebuffer pixels
-      if (Math.abs(dy) > Math.abs(dx) && dy < -thr) this._jump();
-      else if (Math.abs(dy) > Math.abs(dx) && dy > thr) this._slide(true);
-      else if (Math.abs(dx) > thr) this._switchLane(dx > 0 ? 1 : -1);
-      else return;
-      this._touch = { x: p.x, y: p.y };
+      if (this._touch.armed && Math.max(Math.abs(dx), Math.abs(dy)) > thr) {
+        if (Math.abs(dy) > Math.abs(dx)) (dy < 0 ? this._jump() : this._slide(true));
+        else this._switchLane(dx > 0 ? 1 : -1);
+        this._touch.armed = false; // lock until lift
+      }
     });
     this.input.on('pointerup', () => { this._touch = null; this._touchHeld = false; });
   }
@@ -867,11 +896,13 @@ export class GameScene extends Phaser.Scene {
     this._scheduleNextSpawn(pick.extraGap || 0);
   }
 
-  // The wagon (if any) currently under the player's feet — same lane, roof
-  // span overlapping the player plane. The front edge shares the landing grace.
+  // The wagon (if any) currently under the player's feet — overlapping her
+  // visual lane, with its roof span over the player plane. The front edge
+  // shares the landing grace.
   _wagonUnder() {
+    const laneF = this._playerLaneF();
     for (const o of this.gameObjs) {
-      if (o.type === 'wagon' && o.lane === this.pLane &&
+      if (o.type === 'wagon' && Math.abs(o.lane - laneF) < 0.5 &&
           o.z <= WAGON_LANDING_GRACE && o.z + o.worldL >= -12) return o;
     }
     return null;
@@ -1401,9 +1432,12 @@ export class GameScene extends Phaser.Scene {
 
   _handleCollision(obj) {
     if (obj.checked) return;
-    const laneDelta = Math.abs(obj.lane - this.pLane);
-    const magnetGrab = this.magnetTimer > 0 && (obj.type === 'coin' || obj.type === 'magnet') && laneDelta <= 1;
-    if (laneDelta > 0 && !magnetGrab) return;
+    // Visual-lane overlap: she collides with what she's drawn over, not with
+    // the lane she's snapping toward. Solids need a real overlap (~half a
+    // lane); the magnet still vacuums anything within roughly one lane.
+    const laneDist = Math.abs(obj.lane - this._playerLaneF());
+    const magnetGrab = this.magnetTimer > 0 && (obj.type === 'coin' || obj.type === 'magnet') && laneDist <= 1.1;
+    if (laneDist > 0.5 && !magnetGrab) return;
 
     if (obj.type === 'shield') {
       obj.checked = true;
@@ -1748,7 +1782,9 @@ export class GameScene extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(this.cursors.left) || Phaser.Input.Keyboard.JustDown(this.aKey)) this._switchLane(-1);
     if (Phaser.Input.Keyboard.JustDown(this.cursors.right) || Phaser.Input.Keyboard.JustDown(this.dKey)) this._switchLane(1);
 
-    this.pX += (this._laneXZ(this.pLane, 0) - this.pX) * 11 * dt;
+    // Snappy lane change: ~0.12s to arrive so the hitbox (which tracks the
+    // visual position, see _playerLaneF) never lags far behind a key press.
+    this.pX += (this._laneXZ(this.pLane, 0) - this.pX) * Math.min(1, 19 * dt);
 
     // Roof riding is positional: she stays up exactly while a wagon is under
     // her feet, and gravity takes over the moment she runs off its real end.
@@ -1809,7 +1845,7 @@ export class GameScene extends Phaser.Scene {
       }
 
       // Riding a roof: its coins collect one by one as they sweep past her
-      if (obj.type === 'wagon' && this.riding && obj.lane === this.pLane) {
+      if (obj.type === 'wagon' && this.riding && Math.abs(obj.lane - this._playerLaneF()) < 0.6) {
         for (const c of obj.coins) {
           if (c.collected) continue;
           const coinZ = Phaser.Math.Linear(obj.z + obj.worldL * 0.86, obj.z + obj.worldL * 0.18, c.lengthT);
