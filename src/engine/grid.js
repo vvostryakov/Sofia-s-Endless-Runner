@@ -36,7 +36,11 @@ export const clampLane = (lane, lanes = LANES) => Math.max(0, Math.min(lanes - 1
 export const playerLevel = (jumpH, riding, groundEps = GROUND_EPS) =>
   riding ? LEVEL.TOP : (jumpH < groundEps ? LEVEL.GROUND : LEVEL.AIR);
 
-/** True when the player is airborne (neither grounded nor riding). */
+/**
+ * True when the player is airborne (neither grounded nor riding).
+ * @param {number} jumpH @param {boolean} riding @param {number} [groundEps]
+ * @returns {boolean}
+ */
 export const isAirborne = (jumpH, riding, groundEps = GROUND_EPS) =>
   playerLevel(jumpH, riding, groundEps) === LEVEL.AIR;
 
