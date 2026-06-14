@@ -1,0 +1,15 @@
+{
+  "name": "sofias-endless-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Engine-first pseudo-3D endless runner. Design & architecture docs in docs/.",
+  "scripts": {
+    "test": "node --test",
+    "typecheck": "tsc -p tsconfig.json",
+    "check": "node --check src/scenes/GameScene.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}
