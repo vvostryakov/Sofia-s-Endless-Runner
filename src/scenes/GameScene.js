@@ -22,6 +22,7 @@ import { drawRunner } from '../runner.js';
 import { difficultyAt, speedAt, levelAt, spawnGapRange } from '../engine/difficulty.js';
 import { clampLane, isAirborne, lanesOverlap, withinReach } from '../engine/grid.js';
 import { blockedLanes, freeLanes, totalWeight, pickWeighted } from '../engine/spawn.js';
+import { RoadCurve } from '../engine/road.js';
 import * as UI from '../ui.js';
 
 // Blend two 0xRRGGBB colours; t=0 → a, t=1 → b
@@ -53,14 +54,7 @@ export class GameScene extends Phaser.Scene {
     this.camBase = setupHiDPI(this);
     this.cameras.main.setRotation(0);
     this.cam = { x: 0, vel: 0, lean: 0, dip: 0, dipVel: 0 };
-    this.roadSegsX = [];
-    this.roadSegsY = [];
-    this.roadScheduledX = 0;
-    this.roadScheduledY = 0;
-    this.lastTurnDir = 0;
-    this.roadLean = 0;
-    this.farX = 0;
-    this.farY = 0;
+    this.road = new RoadCurve(SPAWN_Z);
     cam3.x = 0;
     cam3.curve = null;
     this.landSquash = 0;
@@ -258,7 +252,7 @@ export class GameScene extends Phaser.Scene {
   // and the lower sky all melt together with no hard seam anywhere.
   _updateAtmosphere() {
     const w = WORLDS[this.worldIdx];
-    const hy = HORIZON_Y + this.farY;
+    const hy = HORIZON_Y + this.road.farY;
     const haze = w.sky[2];
     const g = this.parallaxG;
     g.clear();
@@ -268,7 +262,7 @@ export class GameScene extends Phaser.Scene {
     ];
     for (const L of layers) {
       g.fillStyle(L.color, L.alpha);
-      const scroll = this.distance * L.speed - this.farX * L.drift;
+      const scroll = this.distance * L.speed - this.road.farX * L.drift;
       const first = Math.floor(scroll / L.spacing);
       for (let k = first - 1; k < first + Math.ceil(W / L.spacing) + 2; k++) {
         const x = k * L.spacing - scroll;
@@ -320,66 +314,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ── Road map: turns and hills anchored to world distance ───────────────────
-  // Curve segments are scheduled ahead in world space and sampled into a
-  // screen-offset table each frame. Because the road's shape lives in the
-  // world, the already-drawn path never morphs: turns appear at the horizon,
-  // sweep toward the player, and flatten out exactly as she reaches them.
-  _scheduleRoad() {
-    const horizon = this.distance + SPAWN_Z * 2.2;
-    while (this.roadScheduledX < horizon) {
-      const start = this.roadScheduledX + Phaser.Math.Between(420, 1700);
-      const len = Phaser.Math.Between(950, 1750);
-      const dir = this.lastTurnDir === 0
-        ? (Math.random() < 0.5 ? -1 : 1)
-        : (Math.random() < 0.74 ? -this.lastTurnDir : this.lastTurnDir);
-      this.lastTurnDir = dir;
-      this.roadSegsX.push({ start, end: start + len, mag: Phaser.Math.FloatBetween(0.16, 0.3) * dir });
-      this.roadScheduledX = start + len;
-    }
-    while (this.roadScheduledY < horizon) {
-      const start = this.roadScheduledY + Phaser.Math.Between(900, 2600);
-      const len = Phaser.Math.Between(1100, 2000);
-      this.roadSegsY.push({ start, end: start + len, mag: Phaser.Math.FloatBetween(-0.11, 0.15) });
-      this.roadScheduledY = start + len;
-    }
-    while (this.roadSegsX.length && this.roadSegsX[0].end < this.distance - 50) this.roadSegsX.shift();
-    while (this.roadSegsY.length && this.roadSegsY[0].end < this.distance - 50) this.roadSegsY.shift();
-  }
-
-  _roadSlope(segs, d) {
-    for (const s of segs) {
-      if (d >= s.start && d <= s.end) {
-        return s.mag * Math.sin(((d - s.start) / (s.end - s.start)) * Math.PI);
-      }
-    }
-    return 0;
-  }
-
+  // The shape lives in engine/road.js (RoadCurve); the scene just advances it
+  // each frame and publishes the table to the shared camera.
   _updateCurveMap() {
-    this._scheduleRoad();
-    const N = 36;
-    const dz = (SPAWN_Z * 1.2) / (N - 1);
-    if (!this._tableX) {
-      this._tableX = new Float32Array(N);
-      this._tableY = new Float32Array(N);
-    }
-    let accX = 0;
-    let accY = 0;
-    this._tableX[0] = 0;
-    this._tableY[0] = 0;
-    for (let i = 1; i < N; i++) {
-      const mid = this.distance + (i - 0.5) * dz;
-      accX += this._roadSlope(this.roadSegsX, mid) * dz;
-      accY += this._roadSlope(this.roadSegsY, mid) * dz;
-      const p = zT(i * dz);
-      this._tableX[i] = accX * p;
-      this._tableY[i] = -accY * p; // elevation up → screen up
-    }
-    cam3.curve = { dz, x: this._tableX, y: this._tableY };
-    this.farX = this._tableX[N - 1];
-    this.farY = this._tableY[N - 1];
-    // Lean into the curvature just ahead of her
-    this.roadLean = this._roadSlope(this.roadSegsX, this.distance + 300);
+    cam3.curve = this.road.update(this.distance, zT);
   }
 
   _updateCamera(dt) {
@@ -391,7 +329,7 @@ export class GameScene extends Phaser.Scene {
     cam3.x = this.cam.x;
 
     // Roll into the strafe and into the road's curvature just ahead
-    const leanTarget = Phaser.Math.Clamp(this.cam.vel * 0.00035 + this.roadLean * 0.32, -0.055, 0.055);
+    const leanTarget = Phaser.Math.Clamp(this.cam.vel * 0.00035 + this.road.lean * 0.32, -0.055, 0.055);
     this.cam.lean += (leanTarget - this.cam.lean) * Math.min(1, dt * 9);
 
     // Landing dip spring (kicked by _onLand)
@@ -539,7 +477,7 @@ export class GameScene extends Phaser.Scene {
     // player; the top edge follows the road elevation so crests rise against
     // the sky. The far colour blends toward the sky so field and backdrop
     // melt together instead of meeting at a hard line.
-    const groundTop = HORIZON_Y + Math.min(0, this.farY) - 2;
+    const groundTop = HORIZON_Y + Math.min(0, this.road.farY) - 2;
     // Far edge melts toward the horizon haze so the top of the field reads as
     // the same atmosphere as the sky, not a separate green slab.
     const farBlend = mixColor(w.grd.far, w.sky[2], 0.66);
@@ -578,7 +516,7 @@ export class GameScene extends Phaser.Scene {
     strokeLine(right, 4, w.grd.edge, 0.92 + comboEnergy * 0.08);
 
     // Horizon glow line in accent colour, tracking the road elevation
-    const hy = HORIZON_Y + this.farY;
+    const hy = HORIZON_Y + this.road.farY;
     hg.lineStyle(14, w.accent, 0.07 + comboEnergy * 0.06);
     hg.beginPath(); hg.moveTo(0, hy); hg.lineTo(W, hy); hg.strokePath();
     hg.lineStyle(2.5, w.accent, 0.75 + comboEnergy * 0.2);
@@ -1767,7 +1705,7 @@ export class GameScene extends Phaser.Scene {
     this._updateAtmosphere();
     this._redrawHitLine();
     if (this.lightPulse) this.lightPulse.setAlpha((this.beatPulse || 0) * 0.045 + this.collectPulse * 0.035);
-    if (this.bdG) { this.bdG.x = -this.farX * 0.45; this.bdG.y = this.farY * 0.5; }
+    if (this.bdG) { this.bdG.x = -this.road.farX * 0.45; this.bdG.y = this.road.farY * 0.5; }
     if (this.beatHalo) this.beatHalo.setPosition(this.pX, PLAYER_ANCHOR_Y - 40);
 
     if (Phaser.Input.Keyboard.JustDown(this.cursors.up) || Phaser.Input.Keyboard.JustDown(this.wKey) || Phaser.Input.Keyboard.JustDown(this.spaceKey)) this._jump();
