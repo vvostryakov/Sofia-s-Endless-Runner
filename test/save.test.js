@@ -4,13 +4,16 @@ import {
   SCHEMA_VERSION, SCHEMA_VERSION_KEY, readVersion, migrateSave,
 } from '../src/engine/save.js';
 
-/** Minimal in-memory SaveStore for tests. */
+/**
+ * Minimal in-memory SaveStore for tests.
+ * @param {Record<string, string>} [init]
+ * @returns {{ getItem(k: string): string|null, setItem(k: string, v: string): void }}
+ */
 const fakeStore = (init = {}) => {
   const m = new Map(Object.entries(init));
   return {
-    getItem: k => (m.has(k) ? m.get(k) : null),
-    setItem: (k, v) => m.set(k, String(v)),
-    _map: m,
+    getItem: (k) => (m.has(k) ? m.get(k) ?? null : null),
+    setItem: (k, v) => { m.set(k, String(v)); },
   };
 };
 
@@ -37,7 +40,9 @@ test('migrateSave is idempotent', () => {
 
 test('migrations run in order, only the pending ones, then stamp target', () => {
   const store = fakeStore({ [SCHEMA_VERSION_KEY]: '1' });
+  /** @type {number[]} */
   const calls = [];
+  /** @type {import('../src/engine/save.js').Migration[]} */
   const migrations = [
     () => calls.push(0), // 0→1 (already applied, must be skipped)
     (s) => { calls.push(1); s.setItem('added_in_v2', 'yes'); }, // 1→2
