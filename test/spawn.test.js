@@ -4,6 +4,10 @@ import {
   blockedLanes, freeLanes, totalWeight, pickWeighted,
 } from '../src/engine/spawn.js';
 
+/**
+ * @param {string} type @param {number} lane @param {number} z @param {number} [worldL]
+ * @returns {{ type: string, lane: number, z: number, worldL: number }}
+ */
 const obj = (type, lane, z, worldL = 0) => ({ type, lane, z, worldL });
 
 test('blockedLanes counts only blocking types within range', () => {
