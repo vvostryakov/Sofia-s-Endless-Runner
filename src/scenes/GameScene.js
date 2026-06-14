@@ -21,6 +21,7 @@ import { equippedOutfit, addToWallet, getWallet } from '../cosmetics.js';
 import { drawRunner } from '../runner.js';
 import { difficultyAt, speedAt, levelAt, spawnGapRange } from '../engine/difficulty.js';
 import { clampLane, isAirborne, lanesOverlap, withinReach } from '../engine/grid.js';
+import { blockedLanes, freeLanes, totalWeight, pickWeighted } from '../engine/spawn.js';
 import * as UI from '../ui.js';
 
 // Blend two 0xRRGGBB colours; t=0 → a, t=1 → b
@@ -889,9 +890,7 @@ export class GameScene extends Phaser.Scene {
     if (this.runTime < SAFE_START_MS) return;
     const difficulty = this._difficulty();
     const pool = this._patternTable().filter(p => difficulty >= (p.min || 0));
-    const total = pool.reduce((s, p) => s + p.w, 0);
-    let roll = Math.random() * total;
-    const pick = pool.find(p => (roll -= p.w) <= 0) || pool[0];
+    const pick = pickWeighted(pool, Math.random() * totalWeight(pool));
     pick.fn(difficulty);
     this._scheduleNextSpawn(pick.extraGap || 0);
   }
@@ -909,17 +908,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   _blockedLanesNear(z, range = 650) {
-    const blocked = new Set();
-    for (const o of this.gameObjs) {
-      if ((o.type === 'obstacle' || o.type === 'gate' || o.type === 'wagon') &&
-          o.z + (o.worldL || 0) > z - range && o.z < z + range) blocked.add(o.lane);
-    }
-    return blocked;
+    return blockedLanes(this.gameObjs, z, range);
   }
 
   _freeLanes(z = SPAWN_Z, range = 650) {
-    const blocked = this._blockedLanesNear(z, range);
-    return [0, 1, 2].filter(l => !blocked.has(l));
+    return freeLanes(this.gameObjs, z, range);
   }
 
   _patternTable() {
