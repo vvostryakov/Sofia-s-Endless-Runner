@@ -12,7 +12,9 @@
 /** @typedef {{ dz: number, x: Float32Array, y: Float32Array }} CurveTable */
 
 // Phaser-free RNG helpers (distribution matches Phaser.Math.Between/FloatBetween).
+/** @param {number} a @param {number} b @returns {number} */
 const randInt = (a, b) => Math.floor(a + Math.random() * (b - a + 1));
+/** @param {number} a @param {number} b @returns {number} */
 const randFloat = (a, b) => a + Math.random() * (b - a);
 
 /**
