@@ -19,6 +19,7 @@ import {
 import { audio, unlockAudio, RHYTHM_TRACK_INFO } from '../audio.js';
 import { equippedOutfit, addToWallet, getWallet } from '../cosmetics.js';
 import { drawRunner } from '../runner.js';
+import { difficultyAt, speedAt, levelAt, spawnGapRange } from '../engine/difficulty.js';
 import * as UI from '../ui.js';
 
 // Blend two 0xRRGGBB colours; t=0 → a, t=1 → b
@@ -872,13 +873,11 @@ export class GameScene extends Phaser.Scene {
 
   // ── Spawn helpers ───────────────────────────────────────────────────────────
   _difficulty() {
-    return Phaser.Math.Clamp(this.runTime / 150000, 0, 1);
+    return difficultyAt(this.runTime);
   }
 
   _scheduleNextSpawn(extra = 0) {
-    const difficulty = this._difficulty();
-    const minGap = Phaser.Math.Linear(1300, 850, difficulty);
-    const maxGap = Phaser.Math.Linear(2100, 1350, difficulty);
+    const { min: minGap, max: maxGap } = spawnGapRange(this._difficulty());
     this.spawnCursor = this.runTime + Phaser.Math.Between(Math.round(minGap), Math.round(maxGap)) + extra;
   }
 
@@ -1744,8 +1743,8 @@ export class GameScene extends Phaser.Scene {
     this.flipT = Math.max(0, this.flipT - dt * 2.6);
     this.distance += this.speed * dt;
     // Each unlocked world raises the speed ceiling a notch
-    this.speed = Math.min(MAX_SPEED + this.worldIdx * 60, BASE_SPEED + this.runTime * 0.0035);
-    this.level = 1 + Math.floor(this.distance / 4500);
+    this.speed = speedAt(this.runTime, this.worldIdx, BASE_SPEED, MAX_SPEED);
+    this.level = levelAt(this.distance);
     this.score += SCORE_PER_SECOND * dt * (1 + Math.min(0.5, (this.combo - 1) * 0.08));
     UI.setScore(this.score);
     UI.setCombo(this.combo);
