@@ -5,6 +5,7 @@
 // Pure, Phaser-free, JSDoc-typed, unit-tested (docs/TDD.md §6 step 6b). The
 // projection (centre-x, z→t) stays in the scene and is composed with these.
 
+/** @param {number} v @param {number} lo @param {number} hi @returns {number} */
 const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
 
 /** Lanes sit at ±this fraction of the half-width from centre. */
