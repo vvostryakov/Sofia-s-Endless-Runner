@@ -1,4 +1,5 @@
 import { STORAGE_KEYS, saveNumber, loadNumber, saveString, loadString } from './constants.js';
+import { addCoins, spend, grant } from './engine/economy.js';
 
 // Outfit palettes map straight onto the primitive-drawn player in GameScene.
 export const OUTFITS = [
@@ -17,10 +18,11 @@ export const OUTFITS = [
 ];
 
 export const getWallet = () => loadNumber(STORAGE_KEYS.totalCoins);
-export const addToWallet = (coins) => saveNumber(STORAGE_KEYS.totalCoins, getWallet() + coins);
+export const addToWallet = (coins) => saveNumber(STORAGE_KEYS.totalCoins, addCoins(getWallet(), coins));
 export const spendFromWallet = (coins) => {
-  if (getWallet() < coins) return false;
-  saveNumber(STORAGE_KEYS.totalCoins, getWallet() - coins);
+  const res = spend(getWallet(), coins);
+  if (!res.ok) return false;
+  saveNumber(STORAGE_KEYS.totalCoins, res.wallet);
   return true;
 };
 
@@ -34,10 +36,8 @@ export const ownedOutfits = () => {
 };
 export const ownOutfit = (id) => {
   const owned = ownedOutfits();
-  if (!owned.includes(id)) {
-    owned.push(id);
-    saveString(STORAGE_KEYS.outfitsOwned, JSON.stringify(owned));
-  }
+  const next = grant(owned, id);
+  if (next !== owned) saveString(STORAGE_KEYS.outfitsOwned, JSON.stringify(next));
 };
 export const equippedOutfit = () => {
   const id = loadString(STORAGE_KEYS.outfitEquipped) || 'classic';
