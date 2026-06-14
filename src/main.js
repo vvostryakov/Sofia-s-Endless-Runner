@@ -1,6 +1,11 @@
 import { W, DPR, H } from './constants.js';
+import { storage } from './platform/storage.js';
+import { migrateSave } from './engine/save.js';
 import { BootScene } from './scenes/BootScene.js';
 import { GameScene } from './scenes/GameScene.js';
+
+// Bring any older save up to the current schema before the game reads it.
+migrateSave(storage);
 
 // ─── Phaser config ────────────────────────────────────────────────────────────
 const config = {
