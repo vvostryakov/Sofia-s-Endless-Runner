@@ -9,7 +9,10 @@
 
 /** @typedef {{ ok: boolean, wallet: number }} SpendResult */
 
-/** Coins are always a non-negative integer (mirrors the storage clamp). */
+/**
+ * Coins are always a non-negative integer (mirrors the storage clamp).
+ * @param {number} n @returns {number}
+ */
 export const clampCoins = (n) => Math.max(0, Math.floor(n));
 
 /**
