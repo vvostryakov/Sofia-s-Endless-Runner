@@ -23,6 +23,7 @@ import { difficultyAt, speedAt, levelAt, spawnGapRange } from '../engine/difficu
 import { clampLane, isAirborne, lanesOverlap, withinReach } from '../engine/grid.js';
 import { blockedLanes, freeLanes, totalWeight, pickWeighted } from '../engine/spawn.js';
 import { RoadCurve } from '../engine/road.js';
+import { halfWidth, laneOffset, laneFromX } from '../engine/track.js';
 import * as UI from '../ui.js';
 
 // Blend two 0xRRGGBB colours; t=0 → a, t=1 → b
@@ -289,8 +290,7 @@ export class GameScene extends Phaser.Scene {
   _trackHalfWidth(t) {
     // Slight FOV widening with speed sells acceleration without moving the camera
     const speedFrac = this.speed ? (this.speed - BASE_SPEED) / (MAX_SPEED - BASE_SPEED) : 0;
-    const boost = 1 + speedFrac * 0.08 * Math.min(Phaser.Math.Clamp(t, 0, 1.5), 1);
-    return TRACK_NEAR_HW * Phaser.Math.Clamp(t, 0, 1.5) * boost;
+    return halfWidth(t, speedFrac, TRACK_NEAR_HW);
   }
 
   _curveCenterX(t) {
@@ -301,16 +301,13 @@ export class GameScene extends Phaser.Scene {
   // not the instantly-snapped target pLane. Collisions, roof-riding and coin
   // pickup all key off this so the hitbox matches where she is actually drawn.
   _playerLaneF() {
-    const center = this._curveCenterX(1); // player plane, z=0 → t=1
-    const hw = this._trackHalfWidth(1);
-    return 1 + (this.pX - center) / (hw * 0.667);
+    return laneFromX(this.pX, this._curveCenterX(1), this._trackHalfWidth(1));
   }
 
   _laneXZ(lane, z) {
-    // (lane - 1) === LANE_SIDE[lane] for whole lanes, and supports fractional
-    // lanes for drifting obstacles.
+    // Supports fractional lanes (for drifting obstacles) via laneOffset.
     const t = zT(z);
-    return this._curveCenterX(t) + (lane - 1) * this._trackHalfWidth(t) * 0.667;
+    return this._curveCenterX(t) + laneOffset(lane, this._trackHalfWidth(t));
   }
 
   // ── Road map: turns and hills anchored to world distance ───────────────────
