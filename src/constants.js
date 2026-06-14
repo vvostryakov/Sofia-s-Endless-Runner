@@ -1,3 +1,8 @@
+import { saveNumber, loadNumber, saveString, loadString } from './platform/storage.js';
+// Re-exported so existing importers of these from './constants.js' keep working
+// while the implementation lives in the platform/storage.js adapter.
+export { saveNumber, loadNumber, saveString, loadString };
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 export const W = 400, H = 700;
 // Render the framebuffer at device resolution (capped at 2x); the camera zooms
@@ -42,24 +47,6 @@ export const STORAGE_KEYS = {
   outfitsOwned: 'ser_outfits_owned_v1',
   outfitEquipped: 'ser_outfit_equipped_v1',
 };
-
-// ─── Persistent storage (guarded: private browsing may block localStorage) ────
-const storage = (() => {
-  try {
-    const probe = '__ser_probe__';
-    localStorage.setItem(probe, '1');
-    localStorage.removeItem(probe);
-    return localStorage;
-  } catch {
-    const mem = new Map();
-    return { getItem: k => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: k => mem.delete(k) };
-  }
-})();
-
-export const saveNumber = (key, value) => storage.setItem(key, String(Math.max(0, Math.floor(value))));
-export const loadNumber = (key) => Number(storage.getItem(key) || 0);
-export const saveString = (key, value) => storage.setItem(key, value);
-export const loadString = (key) => storage.getItem(key);
 
 // Rhythm bests are tracked per track; 'classic' keeps the original keys.
 export const bestKeys = (rhythm, track = 'classic') => rhythm
