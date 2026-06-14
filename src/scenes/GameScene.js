@@ -20,6 +20,7 @@ import { audio, unlockAudio, RHYTHM_TRACK_INFO } from '../audio.js';
 import { equippedOutfit, addToWallet, getWallet } from '../cosmetics.js';
 import { drawRunner } from '../runner.js';
 import { difficultyAt, speedAt, levelAt, spawnGapRange } from '../engine/difficulty.js';
+import { clampLane, isAirborne, lanesOverlap, withinReach } from '../engine/grid.js';
 import * as UI from '../ui.js';
 
 // Blend two 0xRRGGBB colours; t=0 → a, t=1 → b
@@ -602,7 +603,7 @@ export class GameScene extends Phaser.Scene {
   _syncPlayer(t) {
     const x = this.pX;
     const comboEnergy = Phaser.Math.Clamp((this.combo - 1) / 4, 0, 1);
-    const grounded = this.jumpH < 2 || this.riding; // roof counts: she runs along it
+    const grounded = !isAirborne(this.jumpH, this.riding); // roof counts: she runs along it
     const sliding = this.slideTimer > 0 && grounded;
 
     // Run cycle speeds up with the game; bob only while grounded
@@ -725,7 +726,7 @@ export class GameScene extends Phaser.Scene {
 
   _jump() {
     if (!this.alive || this.pausedRun || this.slideTimer > 0) return;
-    const grounded = this.jumpH < 2 || this.riding;
+    const grounded = !isAirborne(this.jumpH, this.riding);
     if (grounded || this.jumpsUsed < 2) {
       this.riding = false;
       this.jumpVel = grounded ? JUMP_INIT : DOUBLE_JUMP_INIT;
@@ -757,7 +758,7 @@ export class GameScene extends Phaser.Scene {
 
   _switchLane(dir) {
     if (!this.alive || this.pausedRun) return;
-    const next = Phaser.Math.Clamp(this.pLane + dir, 0, 2);
+    const next = clampLane(this.pLane + dir);
     if (next === this.pLane) return;
     this.pLane = next;
     audio.switchLane();
@@ -1434,9 +1435,9 @@ export class GameScene extends Phaser.Scene {
     // Visual-lane overlap: she collides with what she's drawn over, not with
     // the lane she's snapping toward. Solids need a real overlap (~half a
     // lane); the magnet still vacuums anything within roughly one lane.
-    const laneDist = Math.abs(obj.lane - this._playerLaneF());
-    const magnetGrab = this.magnetTimer > 0 && (obj.type === 'coin' || obj.type === 'magnet') && laneDist <= 1.1;
-    if (laneDist > 0.5 && !magnetGrab) return;
+    const laneF = this._playerLaneF();
+    const magnetGrab = this.magnetTimer > 0 && (obj.type === 'coin' || obj.type === 'magnet') && withinReach(obj.lane, laneF);
+    if (!lanesOverlap(obj.lane, laneF) && !magnetGrab) return;
 
     if (obj.type === 'shield') {
       obj.checked = true;
