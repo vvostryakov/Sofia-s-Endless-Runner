@@ -24,6 +24,7 @@ import { clampLane, isAirborne, lanesOverlap, withinReach } from '../engine/grid
 import { blockedLanes, freeLanes, totalWeight, pickWeighted } from '../engine/spawn.js';
 import { RoadCurve } from '../engine/road.js';
 import { halfWidth, laneOffset, laneFromX } from '../engine/track.js';
+import { resolveJump, integrateVertical } from '../engine/jump.js';
 import * as UI from '../ui.js';
 
 // Blend two 0xRRGGBB colours; t=0 → a, t=1 → b
@@ -663,11 +664,12 @@ export class GameScene extends Phaser.Scene {
   _jump() {
     if (!this.alive || this.pausedRun || this.slideTimer > 0) return;
     const grounded = !isAirborne(this.jumpH, this.riding);
-    if (grounded || this.jumpsUsed < 2) {
+    const res = resolveJump(grounded, this.jumpsUsed, JUMP_INIT, DOUBLE_JUMP_INIT);
+    if (res) {
       this.riding = false;
-      this.jumpVel = grounded ? JUMP_INIT : DOUBLE_JUMP_INIT;
-      if (!grounded) this.flipT = 1; // front-flip on the double jump
-      this.jumpsUsed = grounded ? 1 : this.jumpsUsed + 1;
+      this.jumpVel = res.jumpVel;
+      if (res.flip) this.flipT = 1; // front-flip on the double jump
+      this.jumpsUsed = res.jumpsUsed;
       this.combo = Math.max(1, this.combo);
       this._toast(grounded ? 'Jump' : 'Double jump', this.pX, NEAR_Y - this.jumpH - 80);
       audio.jump();
@@ -1729,8 +1731,9 @@ export class GameScene extends Phaser.Scene {
     if (!this.riding) {
       const wasAir = this.jumpH > 2;
       const prevH = this.jumpH;
-      this.jumpVel -= GRAVITY * dt;
-      this.jumpH += this.jumpVel * dt;
+      const stepped = integrateVertical(this.jumpH, this.jumpVel, dt, GRAVITY);
+      this.jumpH = stepped.jumpH;
+      this.jumpVel = stepped.jumpVel;
       if (plat && this.jumpVel < 0 && prevH >= WAGON_TOP - 16 && this.jumpH <= WAGON_TOP) {
         // caught a roof on the way down (re-landing after a roof jump)
         this.riding = true;
